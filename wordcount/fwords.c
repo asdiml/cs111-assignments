@@ -86,39 +86,37 @@ int main(int argc, char *argv[]) {
                 close(pipes[i - 1][0]); // Close read end of the pipe
                 //printf("[%d] child processing file %s\n", getpid(), argv[i]);
                 count_words(&word_counts, infile);
+                fclose(infile);
                 FILE *pipe_stream = fdopen(pipes[i - 1][1], "w");
                 if (pipe_stream == NULL) {
                     perror("fdopen");
                     exit(EXIT_FAILURE);
                 }
+
                 fprint_words(&word_counts, pipe_stream);
                 fclose(pipe_stream); // Close the stream to flush the pipe
-                fclose(infile);
+                
                 close(pipes[i - 1][1]); // Close write end of the pipe
                 exit(EXIT_SUCCESS);  // Child exits after processing
+
             } else { /* Parent Process */
                 close(pipes[i - 1][1]); // Close write end of the pipe
                 //printf("[%d] parent of [%d]\n", getpid(), cpid);
-                fclose(infile);
-                // Parent continues the loop
             }
         
         }
         
-            for (int i = 1; i < argc; i++) {
-                wait(NULL);
+        for (int i = 0; i < argc-1; i++) {
+            FILE *pipe_in = fdopen(pipes[i][0], "r");
+            if (!pipe_in) {
+                perror("fdopen");
+                continue;
             }
-            // since merge takes a file stream 
-            for (int i = 1; i < argc; i++) {
-                FILE *stream = fdopen(pipes[i - 1][0], "r");
-                if (stream == NULL) {
-                    perror("fdopen");
-                    exit(EXIT_FAILURE);
-                }
-                merge_counts(&word_counts, stream);
-                fclose(stream);
-                close(pipes[i - 1][0]); // Close read end of the pipe
-            }
+
+            merge_counts(&word_counts, pipe_in);
+            fclose(pipe_in);
+            wait(NULL); // Wait for each child
+        }
         
     }
 
