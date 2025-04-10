@@ -70,11 +70,6 @@ int main(int argc, char *argv[]) {
                 perror("pipe");
                 exit(EXIT_FAILURE);
             }
-            FILE *infile = fopen(argv[i], "r");
-            if (infile == NULL) {
-                perror("fopen");
-                exit(EXIT_FAILURE);
-            }
             
             pid_t cpid = fork();
             
@@ -82,6 +77,11 @@ int main(int argc, char *argv[]) {
                 perror("Fork failed");
                 exit(EXIT_FAILURE);
             } else if (cpid == 0) { /* Child Process */
+                FILE *infile = fopen(argv[i], "r");
+                if (infile == NULL) {
+                    perror("fopen");
+                    exit(EXIT_FAILURE);
+                }
                 // Child process handles its file
                 close(pipes[i - 1][0]); // Close read end of the pipe
                 //printf("[%d] child processing file %s\n", getpid(), argv[i]);
