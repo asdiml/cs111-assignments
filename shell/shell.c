@@ -10,7 +10,7 @@
 #include <sys/wait.h>
 #include <termios.h>
 #include <unistd.h>
-
+#include <linux/limits.h>
 #include "tokenizer.h"
 
 /* Convenience macro to silence compiler warnings about unused function
@@ -31,6 +31,8 @@ pid_t shell_pgid;
 
 int cmd_exit(struct tokens *tokens);
 int cmd_help(struct tokens *tokens);
+int cmd_cd(struct tokens *tokens);
+int cmd_pwd();
 
 /* Built-in command functions take token array (see parse.h) and return int */
 typedef int cmd_fun_t(struct tokens *tokens);
@@ -45,8 +47,36 @@ typedef struct fun_desc {
 fun_desc_t cmd_table[] = {
     {cmd_help, "?", "show this help menu"},
     {cmd_exit, "exit", "exit the command shell"},
+    {cmd_cd, "cd", "change directory"},
+    {cmd_pwd, "pwd", "print working directory"},
 };
-
+int cmd_cd(unused struct tokens *tokens) {
+    if (tokens_get_length(tokens) == 1) {
+        fprintf(stderr, "cd: missing argument\n");
+        return -1;
+    }
+    if (tokens_get_length(tokens) > 2) {
+        fprintf(stderr, "cd: too many arguments\n");
+        return -1;
+    }
+    char *path = tokens_get_token(tokens, 1);
+    if (chdir(path) == 0) {
+        return 0;
+    } else {
+        perror("cd");
+        return -1;
+    }
+}
+int cmd_pwd() {
+    char cwd[PATH_MAX];
+    if (getcwd(cwd, sizeof(cwd)) != NULL) {
+        printf("Current working dir: %s\n", cwd);
+        return 0;
+    } else {
+        perror("getcwd() error");
+        return 1;
+    }
+}
 /* Prints a helpful description for the given command */
 int cmd_help(unused struct tokens *tokens) {
     for (unsigned int i = 0; i < sizeof(cmd_table) / sizeof(fun_desc_t); i++) {
@@ -123,6 +153,9 @@ int main(unused int argc, unused char *argv[]) {
             cmd_table[fundex].fun(tokens);
         } else {
             /* REPLACE this to run commands as programs. */
+            for (int i = 0; i < tokens_get_length(tokens); i++) {
+                printf("%s ", tokens_get_token(tokens, i));
+            }
             fprintf(stdout, "This shell doesn't know how to run programs.\n");
         }
 
