@@ -42,23 +42,27 @@ size_t len_words(word_count_list_t *wclist) {
     return result;
 }
 
+// We made the entire add_word function critical, so find_word should NOT be called directly
+// Unfortunately we don't have control of the interface (for the assignment submission), so
+// we can't make this static, nor do we have control of the word_count_list_t struct, so we
+// can't add a pthread_mutexattr_t field and set it to PTHREAD_MUTEX_RECURSIVE
 word_count_t *find_word(word_count_list_t *wclist, char *word) {
-    pthread_mutex_lock(&wclist->lock);
+    // pthread_mutex_lock(&wclist->lock);
     struct list *wclist_list = &wclist->lst;
     for (struct list_elem *e = list_begin(wclist_list); e != list_end(wclist_list); e = list_next(e)) {
         word_count_t *wc = list_entry(e, word_count_t, elem);
         if (strcmp(word, wc->word) == 0) {
-            pthread_mutex_unlock(&wclist->lock);
+            // pthread_mutex_unlock(&wclist->lock);
             return wc;
         }
     }
-    pthread_mutex_unlock(&wclist->lock);
+    // pthread_mutex_unlock(&wclist->lock);
     return NULL;
 }
 
 word_count_t *add_word(word_count_list_t *wclist, char *word) {
-    word_count_t *wc = find_word(wclist, word);
     pthread_mutex_lock(&wclist->lock);
+    word_count_t *wc = find_word(wclist, word);
     if (wc != NULL) {
         wc->count += 1;
     } else if ((wc = malloc(sizeof(word_count_t))) != NULL) {

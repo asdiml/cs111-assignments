@@ -2,7 +2,7 @@
  * Word count application with one process per input file.
  *
  * You may modify this file in any way you like, and are expected to modify it.
- * Your solution must read each input file from a separate thread. We encourage
+ * Your solution must read each input file from a separate process. We encourage
  * you to make as few changes as necessary.
  */
 
@@ -62,7 +62,43 @@ int main(int argc, char *argv[]) {
         /* Process stdin in a single process. */
         count_words(&word_counts, stdin);
     } else {
-        /* TODO */
+        pid_t cpids[argc - 1];
+        int pipes[argc - 1][2];
+
+        for (int i = 1; i < argc; i++) {
+            if (pipe(pipes[i-1]) == -1) {
+                perror("pipe");
+                exit(1);
+            }
+            if ((cpids[i-1] = fork()) == -1) {
+                perror("fork");
+                exit(1);
+            }
+
+            if (cpids[i-1] > 0) // Parent
+                close(pipes[i-1][1]);
+            else if (cpids[i-1] == 0) { // Child
+                close(pipes[i-1][0]);
+                FILE *pipe_w_FILE = fdopen(pipes[i-1][1], "w");
+                FILE *infile = fopen(argv[i], "r");
+                if (infile == NULL) {
+                    perror("fopen");
+                    exit(1);
+                }
+
+                count_words(&word_counts, infile);
+                fprint_words(&word_counts, pipe_w_FILE);
+                fclose(infile);
+                fclose(pipe_w_FILE);
+                return 0;
+            }
+        }
+
+        for (int i = 1; i < argc; i++) { // Parent-only
+            FILE *pipe_r_FILE = fdopen(pipes[i-1][0], "r");
+            merge_counts(&word_counts, pipe_r_FILE);
+            fclose(pipe_r_FILE);
+        }
     }
 
     /* Output final result of all process' work. */

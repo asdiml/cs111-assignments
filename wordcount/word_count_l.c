@@ -50,7 +50,7 @@ word_count_t *add_word_with_count(word_count_list_t *wclist, char *word,
         wc->count += count;
     } else if ((wc = malloc(sizeof(word_count_t))) != NULL) {
         wc->word = word;
-        wc->count = 1;
+        wc->count = count;
         list_push_front(wclist, &(wc->elem));
     } else {
         perror("malloc");
