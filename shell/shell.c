@@ -156,17 +156,34 @@ int main(unused int argc, unused char *argv[]) {
 
             pid_t pid = fork();
             if (pid == 0) {
+                char *PATH = getenv("PATH");
+                char *token = strtok(PATH, ":");
                 char *program = tokens_get_token(tokens, 0);
+
                 int token_count = tokens_get_length(tokens);
                 char **args = malloc((token_count + 1) * sizeof(char *)); // array of pointers referencing the tokens
-                for (int i = 0; i < token_count; i++) {
+                for (int i = 1; i < token_count; i++) {
                     args[i] = tokens_get_token(tokens, i);
                 }
                 
                 args[token_count] = NULL; // last element must be NULL for execvp
-                printf("Executing command: %s\n", program);
-                execvp(program, args);
-                perror("execvp");
+                char abs_path[1024];
+                while (token != NULL) {
+                    // overwrite abs_path with the current token
+                    strcpy(abs_path, token);
+                    strcat(abs_path, "/");
+                    strcat(abs_path, program);
+                    args[0] = abs_path;
+                    printf("Executing command: %s\n", abs_path);
+                    execv(abs_path, args);
+                    token = strtok(NULL, ":");
+                    perror("execv");
+                    
+                }
+                // printf("Executing command: %s\n", program);
+                // execvp(program, args);
+                // perror("execvp");
+                // free(args);
                 free(args);
                 exit(1);    
             } else if (pid > 0) {
