@@ -161,12 +161,53 @@ int main(unused int argc, unused char *argv[]) {
                 char *program = tokens_get_token(tokens, 0);
 
                 int token_count = tokens_get_length(tokens);
+                int j = 1;               
+                char *infile = NULL;
+                char *outfile = NULL;
                 char **args = malloc((token_count + 1) * sizeof(char *)); // array of pointers referencing the tokens
                 for (int i = 1; i < token_count; i++) {
-                    args[i] = tokens_get_token(tokens, i);
+                    char *tok = tokens_get_token(tokens, i);
+                    
+                    if (strcmp(tok, ">") == 0) {
+                        outfile = tokens_get_token(tokens, ++i);
+                    }
+                    else if (strcmp(tok, "<") == 0) {
+                        infile = tokens_get_token(tokens, ++i);
+                    } else {
+                        printf("%d, %s\n", j, tok);
+                        args[j] = tok;
+                        j++;
+                    }
+                    //args[i] = tokens_get_token(tokens, i);
                 }
-                
-                args[token_count] = NULL; // last element must be NULL for execvp
+                if (infile != NULL) {
+                    int fd = open(infile, O_RDONLY);
+                    if (fd == -1) {
+                        perror("open");
+                        exit(1);
+                    }
+                    if (dup2(fd, STDIN_FILENO) == -1) {
+                        perror("dup2");
+                        exit(1);
+                    }
+                    close(fd);
+                }
+                if (outfile != NULL) {
+                    // open file descriptor with flags write perm, create if dne, and start at 0 length
+                    int fd = open(outfile, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+                    if (fd == -1) {
+                        perror("open");
+                        exit(1);
+                    }
+                    if (dup2(fd, STDOUT_FILENO) == -1) {
+                        perror("dup2");
+                        exit(1);
+                    }
+                    close(fd);
+
+                }
+                //args[token_count] = NULL; // last element must be NULL for execvp
+                args[j] = NULL; // last element must be NULL for execvp
                 char abs_path[1024];
                 while (token != NULL) {
                     // overwrite abs_path with the current token
@@ -175,9 +216,12 @@ int main(unused int argc, unused char *argv[]) {
                     strcat(abs_path, program);
                     args[0] = abs_path;
                     printf("Executing command: %s\n", abs_path);
+                    // for (int i = 0; i < token_count; i++) {
+                    //     printf("args[%d]: %s\n", i, args[i]);
+                    // }
                     execv(abs_path, args);
                     token = strtok(NULL, ":");
-                    perror("execv");
+                    //perror("execv");
                     
                 }
                 // printf("Executing command: %s\n", program);

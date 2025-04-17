@@ -1,0 +1,6 @@
+Executing command: /home/cs111-student/.vscode-server/cli/servers/Stable-4949701c880d4bdb949e3c0e6b400288da7f474b/server/bin/remote-cli/wc
+Executing command: /usr/local/sbin/wc
+Executing command: /usr/local/bin/wc
+Executing command: /usr/sbin/wc
+Executing command: /usr/bin/wc
+ 252  877 7917 shell.c
