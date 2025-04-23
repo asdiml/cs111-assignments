@@ -70,7 +70,7 @@ int cmd_cd(unused struct tokens *tokens) {
 int cmd_pwd() {
     char cwd[PATH_MAX];
     if (getcwd(cwd, sizeof(cwd)) != NULL) {
-        printf("Current working dir: %s\n", cwd);
+        printf("%s\n", cwd);
         return 0;
     } else {
         perror("getcwd() error");
@@ -131,8 +131,42 @@ void init_shell() {
     }
 }
 
+
+char** process_arguments(struct tokens *tokens, char **infile, char **outfile) {
+    int token_count = tokens_get_length(tokens);
+    char **args = malloc((token_count + 1) * sizeof(char *));
+    
+    if (!args) {
+        perror("malloc");
+        return NULL;
+    }
+    
+    args[0] = tokens_get_token(tokens, 0); // Program name
+    
+    int j = 1;
+    for (int i = 1; i < token_count; i++) {
+        char *tok = tokens_get_token(tokens, i);
+        
+        if (strcmp(tok, ">") == 0 && (i + 1) < token_count) {
+            *outfile = tokens_get_token(tokens, ++i);
+        }
+        else if (strcmp(tok, "<") == 0 && (i + 1) < token_count) {
+            *infile = tokens_get_token(tokens, ++i);
+        } else {
+            args[j++] = tok;
+        }
+    }
+    args[j] = NULL; // Null-terminate the argument array for execv
+    
+    return args;
+}
+
 int main(unused int argc, unused char *argv[]) {
+
     init_shell();
+    signal(SIGINT, SIG_IGN);
+    signal(SIGTTOU, SIG_IGN);
+    signal(SIGTSTP, SIG_IGN);
 
     static char line[4096];
     int line_num = 0;
@@ -153,88 +187,89 @@ int main(unused int argc, unused char *argv[]) {
             cmd_table[fundex].fun(tokens);
         } else {
             /* REPLACE this to run commands as programs. */
+            char *original_path = getenv("PATH");
+            char *path_copy = strdup(original_path); 
+            if (path_copy == NULL) {
+                perror("strdup");
+                continue;
+            }
+            char *token = strtok(path_copy, ":");
+            char *program = tokens_get_token(tokens, 0);
+            
+            char *infile = NULL;
+            char *outfile = NULL;
+            char **args = process_arguments(tokens, &infile, &outfile);
+            if (!args) {
+                fprintf(stderr, "Failed to process command arguments\n");
+                continue;
+            }
+
+            // I/O redirection handling
+            if (infile != NULL) {
+                int fd = open(infile, O_RDONLY);
+                if (fd == -1) {
+                    perror("open");
+                    free(args);
+                    continue;
+                }
+                if (dup2(fd, STDIN_FILENO) == -1) {
+                    perror("dup2");
+                    close(fd);
+                    free(args);
+                    continue;
+                }
+                close(fd);
+            }
+            
+            if (outfile != NULL) {
+                int fd = open(outfile, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+                if (fd == -1) {
+                    perror("open");
+                    free(args);
+                    continue;
+                }
+                if (dup2(fd, STDOUT_FILENO) == -1) {
+                    perror("dup2");
+                    close(fd);
+                    free(args);
+                    continue;
+                }
+                close(fd);
+            }
 
             pid_t pid = fork();
-            if (pid == 0) {
-                char *PATH = getenv("PATH");
-                char *token = strtok(PATH, ":");
-                char *program = tokens_get_token(tokens, 0);
+            if (pid < 0) {
+                perror("fork");
+                free(args);
+            } 
+            else if (pid == 0) {
+                setpgid(0, 0);
+                tcsetpgrp(shell_terminal, getpid());
+                signal(SIGINT, SIG_DFL);
+                signal(SIGTTOU, SIG_DFL);
+                signal(SIGTSTP, SIG_DFL);
 
-                int token_count = tokens_get_length(tokens);
-                int j = 1;               
-                char *infile = NULL;
-                char *outfile = NULL;
-                char **args = malloc((token_count + 1) * sizeof(char *)); // array of pointers referencing the tokens
-                for (int i = 1; i < token_count; i++) {
-                    char *tok = tokens_get_token(tokens, i);
-                    
-                    if (strcmp(tok, ">") == 0) {
-                        outfile = tokens_get_token(tokens, ++i);
-                    }
-                    else if (strcmp(tok, "<") == 0) {
-                        infile = tokens_get_token(tokens, ++i);
-                    } else {
-                        printf("%d, %s\n", j, tok);
-                        args[j] = tok;
-                        j++;
-                    }
-                    //args[i] = tokens_get_token(tokens, i);
+                if (program[0] == '/' || program[0] == '.') {
+                    args[0] = program;
+                    execv(program, args);
                 }
-                if (infile != NULL) {
-                    int fd = open(infile, O_RDONLY);
-                    if (fd == -1) {
-                        perror("open");
-                        exit(1);
-                    }
-                    if (dup2(fd, STDIN_FILENO) == -1) {
-                        perror("dup2");
-                        exit(1);
-                    }
-                    close(fd);
-                }
-                if (outfile != NULL) {
-                    // open file descriptor with flags write perm, create if dne, and start at 0 length
-                    int fd = open(outfile, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-                    if (fd == -1) {
-                        perror("open");
-                        exit(1);
-                    }
-                    if (dup2(fd, STDOUT_FILENO) == -1) {
-                        perror("dup2");
-                        exit(1);
-                    }
-                    close(fd);
 
-                }
-                //args[token_count] = NULL; // last element must be NULL for execvp
-                args[j] = NULL; // last element must be NULL for execvp
                 char abs_path[1024];
                 while (token != NULL) {
-                    // overwrite abs_path with the current token
                     strcpy(abs_path, token);
                     strcat(abs_path, "/");
                     strcat(abs_path, program);
                     args[0] = abs_path;
-                    printf("Executing command: %s\n", abs_path);
-                    // for (int i = 0; i < token_count; i++) {
-                    //     printf("args[%d]: %s\n", i, args[i]);
-                    // }
                     execv(abs_path, args);
                     token = strtok(NULL, ":");
-                    //perror("execv");
-                    
                 }
-                // printf("Executing command: %s\n", program);
-                // execvp(program, args);
-                // perror("execvp");
-                // free(args);
+                
+                fprintf(stderr, "%s: command not found\n", program);
                 free(args);
                 exit(1);    
             } else if (pid > 0) {
                 wait(NULL);
-            }
-            else {
-                perror("fork");
+                free(path_copy);
             }
             
         }
@@ -246,6 +281,11 @@ int main(unused int argc, unused char *argv[]) {
 
         /* Clean up memory. */
         tokens_destroy(tokens);
+
+        tcsetpgrp(0, getpid());
+        signal(SIGINT, SIG_IGN);
+        signal(SIGTTOU, SIG_IGN);
+        signal(SIGTSTP, SIG_IGN);
     }
 
     return 0;
