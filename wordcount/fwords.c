@@ -28,8 +28,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 #include <sys/wait.h>
+#include <unistd.h>
 
 #include "word_count.h"
 #include "word_helpers.h"
@@ -65,14 +65,14 @@ int main(int argc, char *argv[]) {
     } else {
         /* TODO */
         for (int i = 1; i < argc; i++) {
-            
+
             if (pipe(pipes[i - 1]) == -1) {
                 perror("pipe");
                 exit(EXIT_FAILURE);
             }
-            
+
             pid_t cpid = fork();
-            
+
             if (cpid == -1) {
                 perror("Fork failed");
                 exit(EXIT_FAILURE);
@@ -84,7 +84,7 @@ int main(int argc, char *argv[]) {
                 }
                 // Child process handles its file
                 close(pipes[i - 1][0]); // Close read end of the pipe
-                //printf("[%d] child processing file %s\n", getpid(), argv[i]);
+                // printf("[%d] child processing file %s\n", getpid(), argv[i]);
                 count_words(&word_counts, infile);
                 fclose(infile);
                 FILE *pipe_stream = fdopen(pipes[i - 1][1], "w");
@@ -95,18 +95,17 @@ int main(int argc, char *argv[]) {
 
                 fprint_words(&word_counts, pipe_stream);
                 fclose(pipe_stream); // Close the stream to flush the pipe
-                
+
                 close(pipes[i - 1][1]); // Close write end of the pipe
-                exit(EXIT_SUCCESS);  // Child exits after processing
+                exit(EXIT_SUCCESS); // Child exits after processing
 
             } else { /* Parent Process */
                 close(pipes[i - 1][1]); // Close write end of the pipe
-                //printf("[%d] parent of [%d]\n", getpid(), cpid);
+                // printf("[%d] parent of [%d]\n", getpid(), cpid);
             }
-        
         }
-        
-        for (int i = 0; i < argc-1; i++) {
+
+        for (int i = 0; i < argc - 1; i++) {
             FILE *pipe_in = fdopen(pipes[i][0], "r");
             if (!pipe_in) {
                 perror("fdopen");
@@ -115,9 +114,8 @@ int main(int argc, char *argv[]) {
 
             merge_counts(&word_counts, pipe_in);
             fclose(pipe_in);
-            wait(NULL); // Wait for each child
+            // wait(NULL); // Wait for each child
         }
-        
     }
 
     /* Output final result of all process' work. */
