@@ -33,6 +33,24 @@
 #include "word_helpers.h"
 
 typedef struct {
+    word_count_list_t *word_counts_ptr;
+    char *filename;
+} thread_args_t;
+
+void *count_words_file(void *args) {
+    thread_args_t *cast_args = args;
+    FILE *infile = fopen(cast_args->filename, "r");
+    if (infile == NULL) {
+        perror("fopen");
+        return (void *) (intptr_t) 1;
+    }
+    count_words(cast_args->word_counts_ptr, infile);
+    fclose(infile);
+    free(args);
+    return 0;
+}
+
+typedef struct {
     word_count_list_t *wclist;
     char *filename;
 } thread_args_t;
@@ -54,11 +72,26 @@ int main(int argc, char *argv[]) {
     /* Create the empty data structure. */
     word_count_list_t word_counts;
     init_words(&word_counts);
+    void *thread_ret;
+
     int rc;
     if (argc <= 1) {
         /* Process stdin in a single thread. */
         count_words(&word_counts, stdin);
     } else {
+        pthread_t threads[argc - 1];
+        for (int i = 1; i < argc; i++){
+            thread_args_t *args = malloc(sizeof(*args));
+            args->word_counts_ptr = &word_counts;
+            args->filename = argv[i];
+            pthread_create(&threads[i-1], NULL, count_words_file, args);
+        }
+        for (int i = 1; i < argc; i++){
+            pthread_join(threads[i-1], &thread_ret);
+            if ((int) (intptr_t) thread_ret != 0) {
+                printf("Word counting failed for the file %s", argv[i]); 
+            }
+        }
         /* TODO */
         int nthreads = argc - 1;
         pthread_t threads[nthreads];

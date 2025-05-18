@@ -13,6 +13,7 @@
 #include "threads/flags.h"
 #include "threads/init.h"
 #include "threads/interrupt.h"
+#include "threads/malloc.h"
 #include "threads/palloc.h"
 #include "threads/synch.h"
 #include "threads/thread.h"
@@ -30,7 +31,7 @@ static bool load(const char *cmdline, void (**eip)(void), void **esp);
    before process_execute() returns.  Returns the new process's
    thread id, or TID_ERROR if the thread cannot be created. */
 tid_t process_execute(const char *file_name) {
-    char *fn_copy;
+    char *fn_copy, *fn_first_space;
     tid_t tid;
 
     sema_init(&temporary, 0);
@@ -40,6 +41,12 @@ tid_t process_execute(const char *file_name) {
     if (fn_copy == NULL)
         return TID_ERROR;
     strlcpy(fn_copy, file_name, PGSIZE);
+
+    /* In general, we shouldn't edit dereferenced objects of const
+       ptrs, but I don't think we use this for anything else other
+       than the name of thread. */
+    if ((fn_first_space = strchr(file_name, ' ')))
+       *fn_first_space = '\x00';
 
     /* Create a new thread to execute FILE_NAME. */
     tid = thread_create(file_name, PRI_DEFAULT, start_process, fn_copy);
@@ -189,7 +196,7 @@ struct Elf32_Phdr {
 #define PF_W 2 /* Writable. */
 #define PF_R 4 /* Readable. */
 
-static bool setup_stack(void **esp);
+static bool setup_stack(void **esp, const char *file_name);
 static bool validate_segment(const struct Elf32_Phdr *, struct file *);
 static bool load_segment(struct file *file, off_t ofs, uint8_t *upage,
                          uint32_t read_bytes, uint32_t zero_bytes,
@@ -204,6 +211,7 @@ bool load(const char *file_name, void (**eip)(void), void **esp) {
     struct Elf32_Ehdr ehdr;
     struct file *file = NULL;
     off_t file_ofs;
+    char *fn_copy = NULL, *fncpy_first_space;
     bool success = false;
     int i;
 
@@ -212,11 +220,20 @@ bool load(const char *file_name, void (**eip)(void), void **esp) {
     if (t->pagedir == NULL)
         goto done;
     process_activate();
+    
+    /* Quick and dirty extraction of the first space-delim string.  
+       It does not make sense for us to parse args here. */
+    fn_copy = palloc_get_page(0);
+    if (fn_copy == NULL)
+        goto done;
+    strlcpy(fn_copy, file_name, PGSIZE);
+    if ((fncpy_first_space = strchr(fn_copy, ' ')))
+        *fncpy_first_space = '\x00';
 
     /* Open executable file. */
-    file = filesys_open(file_name);
+    file = filesys_open(fn_copy);
     if (file == NULL) {
-        printf("load: %s: open failed\n", file_name);
+        printf("load: %s: open failed\n", fn_copy);
         goto done;
     }
 
@@ -225,7 +242,7 @@ bool load(const char *file_name, void (**eip)(void), void **esp) {
         memcmp(ehdr.e_ident, "\177ELF\1\1\1", 7) || ehdr.e_type != 2 ||
         ehdr.e_machine != 3 || ehdr.e_version != 1 ||
         ehdr.e_phentsize != sizeof(struct Elf32_Phdr) || ehdr.e_phnum > 1024) {
-        printf("load: %s: error loading executable\n", file_name);
+        printf("load: %s: error loading executable\n", fn_copy);
         goto done;
     }
 
@@ -282,16 +299,16 @@ bool load(const char *file_name, void (**eip)(void), void **esp) {
     }
 
     /* Set up stack. */
-    if (!setup_stack(esp))
+    if (!setup_stack(esp, file_name))
         goto done;
 
     /* Start address. */
     *eip = (void (*)(void)) ehdr.e_entry;
 
     success = true;
-
+    
 done:
-    /* We arrive here whether the load is successful or not. */
+    palloc_free_page(fn_copy);
     file_close(file);
     return success;
 }
@@ -398,20 +415,67 @@ static bool load_segment(struct file *file, off_t ofs, uint8_t *upage,
     return true;
 }
 
+/* setup_stack() helpers. */
+
+typedef struct args {
+    uint32_t argc;
+    char **argv;
+} args_t;
+static bool parse_args(char *file_name, args_t *parsed_args, char **argv);
+static bool place_args_on_stack(void **esp, args_t *args, const uint8_t *kpage, const uint8_t *upage);
+
 /* Create a minimal stack by mapping a zeroed page at the top of
    user virtual memory. */
-   static bool setup_stack(void **esp) {
-    uint8_t *kpage;
+static bool setup_stack(void **esp, const char *file_name) {
+    char *fn_copy = NULL;
+    args_t parsed_args = {.argc = 0, .argv = NULL};
+    uint8_t *argv_page, *kpage;
     bool success = false;
+
+    /* argv can be arbitrarily large, so we just allocate a page for it.
+       The main reason I don't want to use malloc() is because we have at most
+       10 possible sizes of chunks for it (else the memory use overhead is going to
+       become high). 
+
+       This may come back to bite us for extremely large-sized cmd line args, 
+       so we should KIV the possibility of segfaults due to this */
+    argv_page = parsed_args.argv = palloc_get_page(0);
+    if (parsed_args.argv == NULL)
+        return false;
+
+    /* We should not modify the original file_name, which strtok_r does. 
+       Allocate a local buffer and strlcpy over.
+       Also, the pointers in parsed_args.argv will point into this string. */
+    fn_copy = malloc(strlen(file_name) + 1);
+    if (fn_copy == NULL)
+        goto done;
+    strlcpy(fn_copy, file_name, strlen(file_name) + 1);
+
+    /* Populate parsed_args.argc and parsed_args.argv */
+    if (!parse_args(fn_copy, &parsed_args, parsed_args.argv))
+        goto done;
+
+    /* ----- FOR DEBUGGING ONLY ----- */
+    // printf("argc: %u\n", parsed_args.argc);
+    // for (int i = 0; i <= parsed_args.argc; i++)
+    //     if (parsed_args.argv[i] != NULL)
+    //         printf("argv[%d] = '%s'\n", i, parsed_args.argv[i]);
+    //     else
+    //         printf("argv[%d] = null\n", i);
+    /* ----- FOR DEBUGGING ONLY ----- */
 
     kpage = palloc_get_page(PAL_USER | PAL_ZERO);
     if (kpage != NULL) {
-        success = install_page(((uint8_t *) PHYS_BASE) - PGSIZE, kpage, true);
-        if (success)
-            *esp = PHYS_BASE - 12; 
-        else
+        success = install_page(((uint8_t *) PHYS_BASE) - PGSIZE, kpage, true) \
+            && place_args_on_stack(esp, &parsed_args, kpage, ((uint8_t *) PHYS_BASE) - PGSIZE);
+        if (!success)
             palloc_free_page(kpage);
     }
+
+done:
+    /* We arrive here regardless of whether setup_stack is successful. */
+    palloc_free_page(argv_page);
+    free(fn_copy);
     return success;
 }
 
@@ -432,3 +496,69 @@ static bool install_page(void *upage, void *kpage, bool writable) {
     return (pagedir_get_page(t->pagedir, upage) == NULL &&
             pagedir_set_page(t->pagedir, upage, kpage, writable));
 }
+
+/* Parse the args from file_name and place them into the args_t struct */
+static bool parse_args(char *file_name, args_t *parsed_args, char **argv) {
+    char *arg;
+
+    /* Process the arguments. */
+    while ((arg = strtok_r(file_name, " ", &file_name)))
+        argv[parsed_args->argc++] = arg;
+
+    /* Remember to include the null pointer at the end of argv.  */
+    argv[parsed_args->argc] = NULL;
+
+    return true;
+}
+
+/* Place the parsed arguments on the stack while checking for a possible 
+   stack overflow. */
+static bool place_args_on_stack(void **esp, args_t *args, uint8_t const *kpage, uint8_t const *upage) {
+    uint8_t *cur_sp = kpage + PGSIZE;
+    size_t argv_arr_size;
+    uint32_t i;
+
+    /* Place the argv strings of front args first on the stack (i.e. 
+       at higher addresses). Purely for implementation convenience. */
+    for (i = 0; i < args->argc; i++) {
+        cur_sp -= strlen(args->argv[i]) + 1;
+
+        /* If more than half of the page is used for args, simply fail. */
+        if (cur_sp < kpage + PGSIZE / 2)
+            return false;
+
+        strlcpy((char *)cur_sp, args->argv[i], strlen(args->argv[i]) + 1);
+        args->argv[i] = (char *)(upage + (cur_sp - kpage));
+    }
+
+    /* Align to the 4 byte boundary and calculate the size of the argv arr. */
+    cur_sp = (uint32_t)cur_sp & (uint32_t)~0x3;
+    argv_arr_size = (args->argc + 1) * sizeof(char *);
+
+    /* Place the argv array onto the stack. */
+    cur_sp -= argv_arr_size;
+    memcpy(cur_sp, args->argv, argv_arr_size);
+    args->argv = (char **)(upage + (cur_sp - kpage));
+
+    /* Align the stack by simply rounding down to 0x10 and subtracting
+       by 0x14. The idea is that the call must occur at the 0x10 byte
+       boundary, so after the return address is pushed onto the stack,
+       the least significant nibble will become 0xc */
+    cur_sp = (uint32_t)cur_sp & (uint32_t)~0xf;
+    cur_sp -= 0x14;
+
+    /* We perform a final check to see if more than half the page is 
+       used just to store args */
+    if (cur_sp < kpage + PGSIZE / 2)
+       return false;
+
+    /* Place argc and argv onto the stack */
+    *(uint32_t *)(cur_sp + 0x4) = args->argc;
+    *(uint32_t *)(cur_sp + 0x8) = (uint32_t)args->argv;
+
+    /* Lastly, update esp */
+    *esp = (void *)(upage + (cur_sp - kpage));
+    
+    return true;
+}
+

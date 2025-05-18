@@ -27,74 +27,35 @@
 #include "word_count.h"
 
 void init_words(word_count_list_t *wclist) {
-    /* TODO */
     list_init(wclist);
 }
 
 size_t len_words(word_count_list_t *wclist) {
-    /* TODO */
-    struct list_elem *e;
-    size_t cnt = 0;
-
-    for (e = list_begin(wclist); e != list_end(wclist); e = list_next(e))
-        cnt++;
-    return cnt;
+    return list_size(wclist);
 }
 
 word_count_t *find_word(word_count_list_t *wclist, char *word) {
-    /* TODO */
-    struct list_elem *e;
-    e = list_begin(wclist);
-    // while not at the end of the list, and the word is not found in current node/struct
-    while ((e != list_end(wclist))) {
-        /* list entry retrieves the struct that contains e, by subtracting the offset of the next element 
-            to the address of the next element
-            elem is attribute of word_count struct that contains prev/next pointers */
-        if (strcmp(list_entry(e, word_count_t, elem)->word, word) == 0) {
-            return list_entry(e, word_count_t, elem);
-        }
-        e = list_next(e);
-
+    for (struct list_elem *e = list_begin(wclist); e != list_end(wclist); e = list_next(e)) {
+        word_count_t *wc = list_entry(e, word_count_t, elem);
+        if (strcmp(word, wc->word) == 0)
+            return wc;
     }
     return NULL;
 }
 
 word_count_t *add_word_with_count(word_count_list_t *wclist, char *word,
                                   int count) {
-    /* TODO */
-    // struct list_elem *e;
-    // wc is a word_count_t struct
     word_count_t *wc = find_word(wclist, word);
     if (wc != NULL) {
         wc->count += count;
-    // if not in the list add to the head of the list
     } else if ((wc = malloc(sizeof(word_count_t))) != NULL) {
         wc->word = word;
         wc->count = count;
-        #ifdef PTHREADS
-        list_push_front(&wclist->lst, &wc->elem);
-        #else
-        list_push_front(wclist, &wc->elem);
-        #endif
-    }
-    else {
+        list_push_front(wclist, &(wc->elem));
+    } else {
         perror("malloc");
     }
     return wc;
-    // e = find_word(list_entry(list_begin(wclist), word_count_t, elem), word);
-    // check if the word is already in the list
-    // if ((list_entry(e, word_count_t, elem)->word) != NULL) {
-    //     list_entry(e, word_count_t, elem)->count += count;
-    // } // if not in the list add to the head of the list
-    // else if ((e = malloc(sizeof(word_count_t))) != NULL) {
-    //     list_entry(e, word_count_t, elem)->word = word;
-    //     list_entry(e, word_count_t, elem)->count = count;
-    //     list_push_front(wclist, e);
-    // } else {
-    //     perror("malloc");
-
-    // }
-    // return list_entry(e, word_count_t, elem);
 }
 
 word_count_t *add_word(word_count_list_t *wclist, char *word) {
@@ -102,26 +63,18 @@ word_count_t *add_word(word_count_list_t *wclist, char *word) {
 }
 
 void fprint_words(word_count_list_t *wclist, FILE *outfile) {
-    /* TODO */
-    struct list_elem *e;
-    e = list_begin(wclist);
-    while (e != list_end(wclist)) {
-        fprintf(outfile, "%8d\t%s\n", list_entry(e, word_count_t, elem)->count,
-                list_entry(e, word_count_t, elem)->word);
-        e = list_next(e);
+    for (struct list_elem *e = list_begin(wclist); e != list_end(wclist); e = list_next(e)) {
+        word_count_t *wc = list_entry(e, word_count_t, elem);
+        fprintf(outfile, "%8d\t%s\n", wc->count, wc->word);
     }
-    
 }
 
 static bool less_list(const struct list_elem *ewc1,
                       const struct list_elem *ewc2, void *aux) {
-    /* TODO */
     word_count_t *wc1 = list_entry(ewc1, word_count_t, elem);
     word_count_t *wc2 = list_entry(ewc2, word_count_t, elem);
-    // cast syntax (int) x, so cast aux as a pointer to a function that returns a bool
-    bool(*comparator_func)(const word_count_t *, const word_count_t *) =
-        (bool (*)(const word_count_t *, const word_count_t *)) aux;
-    return comparator_func(wc1, wc2);
+    bool (*less)(const word_count_t *, const word_count_t *) = aux;
+    return less(wc1, wc2);
 }
 
 
@@ -130,5 +83,5 @@ static bool less_list(const struct list_elem *ewc1,
    false if A is greater than or equal to B. */
 void wordcount_sort(word_count_list_t *wclist,
                     bool less(const word_count_t *, const word_count_t *)) {
-    list_sort(wclist, less_list, less);
+    list_sort(wclist, less_list, (void *) less);
 }

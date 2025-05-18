@@ -2,7 +2,7 @@
  * Word count application with one process per input file.
  *
  * You may modify this file in any way you like, and are expected to modify it.
- * Your solution must read each input file from a separate thread. We encourage
+ * Your solution must read each input file from a separate process. We encourage
  * you to make as few changes as necessary.
  */
 
@@ -63,58 +63,42 @@ int main(int argc, char *argv[]) {
         /* Process stdin in a single process. */
         count_words(&word_counts, stdin);
     } else {
-        /* TODO */
-        for (int i = 1; i < argc; i++) {
+        pid_t cpids[argc - 1];
+        int pipes[argc - 1][2];
 
-            if (pipe(pipes[i - 1]) == -1) {
+        for (int i = 1; i < argc; i++) {
+            if (pipe(pipes[i-1]) == -1) {
                 perror("pipe");
-                exit(EXIT_FAILURE);
+                exit(1);
+            }
+            if ((cpids[i-1] = fork()) == -1) {
+                perror("fork");
+                exit(1);
             }
 
-            pid_t cpid = fork();
-
-            if (cpid == -1) {
-                perror("Fork failed");
-                exit(EXIT_FAILURE);
-            } else if (cpid == 0) { /* Child Process */
+            if (cpids[i-1] > 0) // Parent
+                close(pipes[i-1][1]);
+            else if (cpids[i-1] == 0) { // Child
+                close(pipes[i-1][0]);
+                FILE *pipe_w_FILE = fdopen(pipes[i-1][1], "w");
                 FILE *infile = fopen(argv[i], "r");
                 if (infile == NULL) {
                     perror("fopen");
-                    exit(EXIT_FAILURE);
+                    exit(1);
                 }
-                // Child process handles its file
-                close(pipes[i - 1][0]); // Close read end of the pipe
-                // printf("[%d] child processing file %s\n", getpid(), argv[i]);
+
                 count_words(&word_counts, infile);
+                fprint_words(&word_counts, pipe_w_FILE);
                 fclose(infile);
-                FILE *pipe_stream = fdopen(pipes[i - 1][1], "w");
-                if (pipe_stream == NULL) {
-                    perror("fdopen");
-                    exit(EXIT_FAILURE);
-                }
-
-                fprint_words(&word_counts, pipe_stream);
-                fclose(pipe_stream); // Close the stream to flush the pipe
-
-                close(pipes[i - 1][1]); // Close write end of the pipe
-                exit(EXIT_SUCCESS); // Child exits after processing
-
-            } else { /* Parent Process */
-                close(pipes[i - 1][1]); // Close write end of the pipe
-                // printf("[%d] parent of [%d]\n", getpid(), cpid);
+                fclose(pipe_w_FILE);
+                return 0;
             }
         }
 
-        for (int i = 0; i < argc - 1; i++) {
-            FILE *pipe_in = fdopen(pipes[i][0], "r");
-            if (!pipe_in) {
-                perror("fdopen");
-                continue;
-            }
-
-            merge_counts(&word_counts, pipe_in);
-            fclose(pipe_in);
-            // wait(NULL); // Wait for each child
+        for (int i = 1; i < argc; i++) { // Parent-only
+            FILE *pipe_r_FILE = fdopen(pipes[i-1][0], "r");
+            merge_counts(&word_counts, pipe_r_FILE);
+            fclose(pipe_r_FILE);
         }
     }
 
