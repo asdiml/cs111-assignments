@@ -29,12 +29,13 @@
 
 /* Invokes syscall NUMBER, passing arguments ARG0 and ARG1, and
    returns the return value as an `int'. */
+   // "=a" indicates what register contains the return value, a->eax
 #define syscall2(NUMBER, ARG0, ARG1)                                           \
     ({                                                                         \
         int retval;                                                            \
         asm volatile(                                                          \
             "pushl %[arg1]; pushl %[arg0]; "                                   \
-            "pushl %[number]; int $0x30; addl $12, %%esp"                      \
+            "pushl %[number]; int $0x30; addl $12, %%esp"                      \ 
             : "=a"(retval)                                                     \
             : [number] "i"(NUMBER), [arg0] "r"(ARG0), [arg1] "r"(ARG1)         \
             : "memory");                                                       \
