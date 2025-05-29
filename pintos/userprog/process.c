@@ -26,10 +26,11 @@ static struct semaphore temporary;
 static thread_func start_process NO_RETURN;
 static bool load(const char *cmdline, void (**eip)(void), void **esp);
 
-/* Starts a new thread running a user program loaded from
-   FILENAME.  The new thread may be scheduled (and may even exit)
-   before process_execute() returns.  Returns the new process's
-   thread id, or TID_ERROR if the thread cannot be created. */
+/* Starts a new thread running a user program loaded from FILENAME, 
+   where the parent thread's tid_t is parent. The new thread may be
+   scheduled (and may even exit) before process_execute() returns.
+   Returns the new process' thread id, or TID_ERROR if the thread
+   cannot be created. */
 tid_t process_execute(const char *file_name) {
     char *fn_copy, *fn_first_space;
     tid_t tid;
@@ -52,6 +53,10 @@ tid_t process_execute(const char *file_name) {
     tid = thread_create(file_name, PRI_DEFAULT, start_process, fn_copy);
     if (tid == TID_ERROR)
         palloc_free_page(fn_copy);
+
+    /* Wait for and return the result of program loading. */
+    /* TODO. */
+
     return tid;
 }
 
@@ -422,10 +427,10 @@ typedef struct args {
     char **argv;
 } args_t;
 static bool parse_args(char *file_name, args_t *parsed_args, char **argv);
-static bool place_args_on_stack(void **esp, args_t *args, const uint8_t *kpage, const uint8_t *upage);
+static bool place_args_on_stack(void **esp, args_t *args, uint8_t* const kpage, uint8_t* const upage);
 
-/* Create a minimal stack by mapping a zeroed page at the top of
-   user virtual memory. */
+/* Setup the stack with argv and argc by mapping a zeroed page at the top of
+   user virtual memory and placing in the strings accordingly. */
 static bool setup_stack(void **esp, const char *file_name) {
     char *fn_copy = NULL;
     args_t parsed_args = {.argc = 0, .argv = NULL};
@@ -438,8 +443,9 @@ static bool setup_stack(void **esp, const char *file_name) {
        become high). 
 
        This may come back to bite us for extremely large-sized cmd line args, 
-       so we should KIV the possibility of segfaults due to this */
-    argv_page = parsed_args.argv = palloc_get_page(0);
+       so we should KIV the possibility of segfaults due to this. */
+    parsed_args.argv = palloc_get_page(0);
+    argv_page = (uint8_t*)parsed_args.argv;
     if (parsed_args.argv == NULL)
         return false;
 
@@ -504,8 +510,6 @@ static bool parse_args(char *file_name, args_t *parsed_args, char **argv) {
     /* Process the arguments. */
     while ((arg = strtok_r(file_name, " ", &file_name)))
         argv[parsed_args->argc++] = arg;
-
-    /* Remember to include the null pointer at the end of argv.  */
     argv[parsed_args->argc] = NULL;
 
     return true;
@@ -513,7 +517,7 @@ static bool parse_args(char *file_name, args_t *parsed_args, char **argv) {
 
 /* Place the parsed arguments on the stack while checking for a possible 
    stack overflow. */
-static bool place_args_on_stack(void **esp, args_t *args, uint8_t const *kpage, uint8_t const *upage) {
+static bool place_args_on_stack(void **esp, args_t *args, uint8_t* const kpage, uint8_t* const upage) {
     uint8_t *cur_sp = kpage + PGSIZE;
     size_t argv_arr_size;
     uint32_t i;
@@ -532,7 +536,7 @@ static bool place_args_on_stack(void **esp, args_t *args, uint8_t const *kpage, 
     }
 
     /* Align to the 4 byte boundary and calculate the size of the argv arr. */
-    cur_sp = (uint32_t)cur_sp & (uint32_t)~0x3;
+    cur_sp = (uint8_t*)((uint32_t)cur_sp & (uint32_t)~0x3);
     argv_arr_size = (args->argc + 1) * sizeof(char *);
 
     /* Place the argv array onto the stack. */
@@ -543,20 +547,20 @@ static bool place_args_on_stack(void **esp, args_t *args, uint8_t const *kpage, 
     /* Align the stack by simply rounding down to 0x10 and subtracting
        by 0x14. The idea is that the call must occur at the 0x10 byte
        boundary, so after the return address is pushed onto the stack,
-       the least significant nibble will become 0xc */
-    cur_sp = (uint32_t)cur_sp & (uint32_t)~0xf;
+       the least significant nibble will become 0xc. */
+    cur_sp = (uint8_t*)((uint32_t)cur_sp & (uint32_t)~0xf);
     cur_sp -= 0x14;
 
     /* We perform a final check to see if more than half the page is 
-       used just to store args */
+       used just to store args. */
     if (cur_sp < kpage + PGSIZE / 2)
        return false;
 
-    /* Place argc and argv onto the stack */
+    /* Place argc and argv onto the stack. */
     *(uint32_t *)(cur_sp + 0x4) = args->argc;
     *(uint32_t *)(cur_sp + 0x8) = (uint32_t)args->argv;
 
-    /* Lastly, update esp */
+    /* Lastly, update esp. */
     *esp = (void *)(upage + (cur_sp - kpage));
     
     return true;

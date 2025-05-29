@@ -94,6 +94,8 @@ struct thread {
     /* Shared between thread.c and synch.c. */
     struct list_elem elem; /* List element. */
 
+    struct list children; /* List of children threads as child_info structs. */
+
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
     uint32_t *pagedir; /* Page directory. */
@@ -101,6 +103,12 @@ struct thread {
 
     /* Owned by thread.c. */
     unsigned magic; /* Detects stack overflow. */
+};
+
+struct child_info {
+   tid_t child_tid; /* Child's tid */
+   struct thread* child_tcb; /* Child's tcb */
+   struct list_elem elem; /* List element. */
 };
 
 /* If false (default), use round-robin scheduler.

@@ -16,22 +16,7 @@ void syscall_init(void) {
 static void syscall_handler(struct intr_frame *f UNUSED) {
     uint32_t *args = ((uint32_t *) f->esp);
 
-    /*
-     * The following print statement, if uncommented, will print out the syscall
-     * number whenever a process enters a system call. You might find it useful
-     * when debugging. It will cause tests to fail, however, so you should not
-     * include it in your final submission.
-     */
-
-    /* printf("System call number: %d\n", args[0]); */
-
     switch (args[0]) {
-
-        case SYS_EXIT:
-            f->eax = args[1];
-            printf("%s: exit(%d)\n", thread_current()->name, args[1]);
-            thread_exit();
-            break;
 
         case SYS_INCREMENT:
             f->eax = args[1] + 1;
@@ -42,6 +27,20 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
                 putbuf((char *)args[2], (size_t)args[3]);
             break;
 
+        // File system calls
+        // TODO
+
+        // Process system calls
+        case SYS_EXIT:
+            f->eax = args[1];
+            printf("%s: exit(%d)\n", thread_current()->name, args[1]);
+            thread_exit();
+            break;
+        
+        case SYS_EXEC:
+            
+        
+        
         default:
             
     }

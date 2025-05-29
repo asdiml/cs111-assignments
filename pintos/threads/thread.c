@@ -1,14 +1,17 @@
 #include "threads/thread.h"
 
 #include <debug.h>
+#include <hash.h>
 #include <random.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <string.h>
 
+#include "threads/exit.h"
 #include "threads/flags.h"
 #include "threads/interrupt.h"
 #include "threads/intr-stubs.h"
+#include "threads/malloc.h"
 #include "threads/palloc.h"
 #include "threads/switch.h"
 #include "threads/synch.h"
@@ -29,6 +32,10 @@ static struct list ready_list;
 /* List of all processes.  Processes are added to this list
    when they are first scheduled and removed when they exit. */
 static struct list all_list;
+
+/* Hashmap of all exit info structs, and corresponding functions
+   required to initialize the hashmap. */
+static struct hash exit_info_hashmap;
 
 /* Idle thread. */
 static struct thread *idle_thread;
@@ -173,6 +180,12 @@ tid_t thread_create(const char *name, int priority, thread_func *function,
     /* Initialize thread. */
     init_thread(t, name, priority);
     tid = t->tid = allocate_tid();
+
+    /* Add thread to the list of children in parent. */
+    struct child_info* child_ent = malloc(sizeof(struct child_info));
+    child_ent->child_tid = tid;
+    child_ent->child_tcb = t;
+    list_push_back(&thread_current()->children, &child_ent->elem);
 
     /* Stack frame for kernel_thread(). */
     kf = alloc_frame(t, sizeof *kf);
@@ -414,6 +427,7 @@ static void init_thread(struct thread *t, const char *name, int priority) {
     t->stack = (uint8_t *) t + PGSIZE;
     t->priority = priority;
     t->magic = THREAD_MAGIC;
+    list_init(&t->children);
 
     old_level = intr_disable();
     list_push_back(&all_list, &t->allelem);
