@@ -56,11 +56,6 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
         case SYS_INCREMENT:
             f->eax = args[1] + 1;
             break;
-        
-        case SYS_WRITE:
-            if (args[1] == STDOUT_FILENO)
-                putbuf((char *)args[2], (size_t)args[3]);
-            break;
         //args[1] is file name and args[2] is size
         case SYS_CREATE:
             lock_acquire(&filesys_lock); 
@@ -143,7 +138,6 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
             int fd = args[1];
             void *buffer = (void *)args[2];
             unsigned size = (unsigned)args[3];
-
             // Validate user pointer for buffer
             if (!check_user_ptr(buffer)) {
                 exit_helper(-1);
@@ -169,12 +163,53 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
                     if (pos >= len) {
                         f->eax = 0; // Already at EOF
                     } else {
-                        int bytes_read = file_read(fde->file, buffer, size);
-                        f->eax = bytes_read >= 0 ? bytes_read : -1;
+                        f->eax = file_read(fde->file, buffer, size);
                     }
                 }
             }
 
+            lock_release(&filesys_lock);
+            break;
+
+        case SYS_WRITE: 
+            fd = args[1];
+            buffer = (void *)args[2];
+            size = (unsigned)args[3];
+            // Validate user pointer for buffer
+            if (!check_user_ptr(buffer)) {
+                exit_helper(-1);
+            }
+            lock_acquire(&filesys_lock);
+            if (fd == STDOUT_FILENO) { // stdout
+                putbuf(buffer, size);
+                f->eax = size;
+            } else {
+                struct file_descriptor_entry *fde = get_file_descriptor(fd);
+                if (fde == NULL || fde->file == NULL) {
+                    f->eax = -1;
+                } else {
+                    f->eax = file_write(fde->file, buffer, size);
+                }
+            }
+            lock_release(&filesys_lock);
+            break;
+
+        case SYS_SEEK: 
+            lock_acquire(&filesys_lock);
+            f->eax = -1; 
+            if (!check_user_ptr((const void *)args[1])){
+                lock_release(&filesys_lock);
+                exit_helper(-1);
+            }
+            fd = args[1];
+            off_t position = (off_t)args[2];
+            struct file_descriptor_entry *fde_seek = get_file_descriptor(fd);
+            if (fde_seek != NULL && fde_seek->file != NULL) {
+                file_seek(fde_seek->file, position);
+                f->eax = 0; // Seek successful
+            } else {
+                f->eax = -1; // Seek failed
+            }
             lock_release(&filesys_lock);
             break;
     }       
