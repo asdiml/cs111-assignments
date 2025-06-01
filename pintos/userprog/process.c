@@ -117,7 +117,7 @@ void process_exit(void) {
         if (fde->file != NULL) {
             file_close(fde->file);
         }
-        free(fde);
+        palloc_free_page(fde);
     }
 
     uint32_t *pd;
@@ -586,7 +586,7 @@ static bool place_args_on_stack(void **esp, args_t *args, uint8_t const *kpage, 
 static void init_userprog_thread_fd_list (struct thread *t){
     list_init (&t->file_descriptors);
     // adding file descriptor entries for stdin and stdout
-    struct file_descriptor_entry *stdin_fde = malloc(sizeof(struct file_descriptor_entry));
+    struct file_descriptor_entry *stdin_fde = palloc_get_page(0);
     if (stdin_fde != NULL) {
         stdin_fde->fd = 0;
         stdin_fde->file = NULL; 
@@ -597,7 +597,7 @@ static void init_userprog_thread_fd_list (struct thread *t){
     }
 
     // Example of adding stdout (fd 1):
-    struct file_descriptor_entry *stdout_fde = malloc(sizeof(struct file_descriptor_entry));
+    struct file_descriptor_entry *stdout_fde = palloc_get_page(0);
     if (stdout_fde != NULL) {
         stdout_fde->fd = 1;
         stdout_fde->file = NULL; // No actual file for stdout

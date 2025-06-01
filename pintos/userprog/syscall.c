@@ -9,7 +9,8 @@
 #include "threads/thread.h"
 #include "threads/synch.h"      // for lock
 #include "userprog/process.h"
-
+#include "filesys/file.h"       // for file operations
+#include "threads/palloc.h"
 
 static void syscall_handler(struct intr_frame *);
 static struct lock filesys_lock; //use this to protect file system calls
@@ -18,6 +19,7 @@ bool check_user_ptr(const void *ptr);
 // gets the next availible file descriptor
 int get_next_fd(void); 
 bool add_fd_to_table(int avail_fd, struct file *opened_file);
+off_t get_file_size(int fd);
 void syscall_init(void) {
     lock_init(&filesys_lock); //initialize the lock for file system calls
     intr_register_int(0x30, 3, INTR_ON, syscall_handler, "syscall");
@@ -91,17 +93,17 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
             lock_acquire(&filesys_lock);
             f->eax = -1; 
             if (!check_user_ptr((const void *)args[1])){
-                thread_exit();
-                lock_release(&filesys_lock);
+                f->eax = -1; 
+                lock_release(&filesys_lock); 
                 break;
             }
             //open the file, if succesful, then obtain a fd int
             struct file *opened_file = filesys_open((const char *)args[1]);
 
             if (opened_file == NULL) {
-                thread_exit();
-                lock_release(&filesys_lock);
-                break; 
+                f->eax = -1; 
+                lock_release(&filesys_lock); 
+                break;
             } else {
                 int fd = get_next_fd(); 
                 if (add_fd_to_table(fd, opened_file)){
@@ -116,7 +118,22 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
                 }
             }
 
-
+        case SYS_FILESIZE: 
+            lock_acquire(&filesys_lock);
+            f->eax = -1; 
+            if (!check_user_ptr((const void *)args[1])){
+                thread_exit();
+                lock_release(&filesys_lock);
+                break;
+            }
+            off_t file_size = get_file_size(args[1]);
+            if (file_size == -1) {
+                f->eax = -1; //file descriptor does not exist
+            } else {
+                f->eax = file_size; //return the file size
+            }
+            lock_release(&filesys_lock);
+            break;
         // https://g.co/gemini/share/461faccc8dea gemini has good info for rest of syscalls
         default:
             
@@ -163,8 +180,7 @@ bool add_fd_to_table(int avail_fd, struct file *opened_file) {
     /* add the file to the current thread's file descriptor table */
     if (opened_file != NULL){
         struct thread *curr = thread_current ();
-        struct file_descriptor_entry *fde = (struct file_descriptor_entry *)
-                                            malloc (sizeof (struct file_descriptor_entry));
+        struct file_descriptor_entry *fde = palloc_get_page(PAL_ZERO);
 
         if (fde != NULL)
         {
@@ -178,10 +194,25 @@ bool add_fd_to_table(int avail_fd, struct file *opened_file) {
         else
         {
             file_close (opened_file);
+            palloc_free_page(fde);
             return false;
         }
         return true;
     } else {
         return false;
     }
+}
+
+int get_file_size(int fd) {
+    struct thread *curr = thread_current();
+    struct file_descriptor_entry *fde = NULL;
+
+    // Check if the file descriptor exists in the current thread's file descriptor table
+    for (struct list_elem *e = list_begin(&curr->file_descriptors); e != list_end(&curr->file_descriptors); e = list_next(e)) {
+        fde = list_entry(e, struct file_descriptor_entry, elem);
+        if (fde->fd == fd) {
+            return file_length(fde->file); // File descriptor exists
+        }
+    }
+    return -1; // File descriptor does not exist
 }
