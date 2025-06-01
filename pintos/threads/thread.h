@@ -102,6 +102,7 @@ struct thread {
     struct list file_descriptors;      
     //list element for file descriptor
     struct lock fd_table_lock;
+    int exit_status;
     //file descriptor lock 
     
 #endif
