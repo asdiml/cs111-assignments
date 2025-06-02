@@ -186,7 +186,7 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
             } else {
                 struct file_descriptor_entry *fde = get_file_descriptor(fd);
                 if (fde == NULL || fde->file == NULL) {
-                    f->eax = -1;
+                    f->eax = 5;
                 } else {
                     f->eax = file_write(fde->file, buffer, size);
                 }
@@ -268,7 +268,6 @@ bool add_fd_to_table(int avail_fd, struct file *opened_file) {
         else
         {
             file_close (opened_file);
-            palloc_free_page(fde);
             return false;
         }
         return true;
@@ -306,16 +305,18 @@ struct file_descriptor_entry *get_file_descriptor (int fd)
     {
     struct thread *curr = thread_current ();
     struct list_elem *e;
-
+    lock_acquire(&curr->fd_table_lock); // Acquire lock before accessing the list
     for (e = list_begin (&curr->file_descriptors); e != list_end (&curr->file_descriptors);
         e = list_next (e))
         {
         struct file_descriptor_entry *fde = list_entry (e, struct file_descriptor_entry, elem);
         if (fde->fd == fd)
             {
+            lock_release(&curr->fd_table_lock); // Release lock after accessing the list
             return fde;
             }
         }
+    lock_release(&curr->fd_table_lock); // Release lock if FD not found
     return NULL; // FD not found
 }
 
