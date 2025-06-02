@@ -12,6 +12,7 @@
 #include "filesys/file.h"       // for file operations
 #include "threads/palloc.h"    // for palloc 
 #include "devices/input.h"     // for input_getc
+#include "lib/string.h"
 
 static void syscall_handler(struct intr_frame *);
 static struct lock filesys_lock; //use this to protect file system calls
@@ -62,22 +63,26 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
     switch (args[0]) {
 
         case SYS_EXIT:
-            f->eax = args[1];
             if (!check_user_ptr(&args[1])) {
                 exit_helper(-1);
-            }   
+            }
+            f->eax = args[1];
             printf("%s: exit(%d)\n", thread_current()->name, args[1]);
             thread_exit();
             break;
 
         case SYS_INCREMENT:
+            if (!check_user_ptr(&args[1])) {
+                exit_helper(-1);
+                return;
+            }
             f->eax = args[1] + 1;
             break;
         //args[1] is file name and args[2] is size
         case SYS_CREATE:
             lock_acquire(&filesys_lock); 
             f->eax = -1;
-            if (!check_user_ptr((const void *)args[1])){
+            if (!validate_user_string((const void *)args[1])) {
                 lock_release(&filesys_lock);
                 exit_helper(-1);
             }
@@ -88,7 +93,7 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
         case SYS_REMOVE: 
             lock_acquire(&filesys_lock); 
             f->eax = -1; 
-            if (!check_user_ptr((const void *)args[1])){
+            if (!validate_user_string((const void *)args[1])){
                 lock_release(&filesys_lock);
                 exit_helper(-1);
             } 
@@ -108,7 +113,7 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
         case SYS_OPEN:
             lock_acquire(&filesys_lock);
             f->eax = -1; 
-            if (!check_user_ptr((const void *)args[1])){
+            if (!validate_user_string((const void *)args[1])){
                 lock_release(&filesys_lock);
                 exit_helper(-1);
             }
@@ -138,10 +143,10 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
         case SYS_FILESIZE: 
             lock_acquire(&filesys_lock);
             f->eax = -1; 
-            if (!check_user_ptr((const void *)args[1])){
-                lock_release(&filesys_lock);
-                exit_helper(-1);
-            }
+            // if (!check_user_ptr((const void *)args[1])){
+            //     lock_release(&filesys_lock);
+            //     exit_helper(-1);
+            // }
             off_t file_size = get_file_size(args[1]);
             if (file_size == -1) {
                 f->eax = -1; //file descriptor does not exist
@@ -156,7 +161,7 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
             void *buffer = (void *)args[2];
             unsigned size = (unsigned)args[3];
             // Validate user pointer for buffer
-            if (!check_user_ptr(buffer)) {
+            if (!validate_user_buffer(buffer, size, false)) {
                 exit_helper(-1);
             }
 
@@ -193,7 +198,7 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
             buffer = (void *)args[2];
             size = (unsigned)args[3];
             // Validate user pointer for buffer
-            if (!check_user_ptr(buffer)) {
+            if (!validate_user_buffer(buffer, size, false)) {
                 exit_helper(-1);
             }
             lock_acquire(&filesys_lock);
@@ -214,10 +219,10 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
         case SYS_SEEK: 
             lock_acquire(&filesys_lock);
             f->eax = -1; 
-            if (!check_user_ptr((const void *)args[1])){
-                lock_release(&filesys_lock);
-                exit_helper(-1);
-            }
+            // if (!check_user_ptr((const void *)args[1])){
+            //     lock_release(&filesys_lock);
+            //     exit_helper(-1);
+            // }
             fd = args[1];
             off_t position = (off_t)args[2];
             struct file_descriptor_entry *fde_seek = get_file_descriptor(fd);
@@ -318,39 +323,38 @@ void validate_user_vaddr (const void *vaddr){
 }
 
 
-// bool validate_user_buffer(void *pointer, size_t length, bool check_writable) {
-//     if (pointer == NULL || !is_user_vaddr(pointer)) {
-//         return false;
-//     }
-//     size_t offset;
-//     // check if every page the buffer spans is valid
-//     for (offset = 0; offset < length; offset += PGSIZE) {
-//         void *addr = pg_round_down(pointer + offset);
-//         if (!is_user_vaddr(addr) || !pagedir_get_page(thread_current()->pagedir, addr)) {
-//             return false;
-//         }
-//     }
-//     return true;
-// }
+bool validate_user_buffer(void *pointer, size_t length, bool check_writable) {
+    if (pointer == NULL || !is_user_vaddr(pointer)) {
+        return false;
+    }
+    size_t offset;
+    // check if every page the buffer spans is valid
+    for (offset = 0; offset < length; offset += PGSIZE) {
+        void *addr = pg_round_down(pointer + offset);
+        if (!is_user_vaddr(addr) || !pagedir_get_page(thread_current()->pagedir, addr)) {
+            return false;
+        }
+    }
+    return true;
+}
 
-// bool validate_user_string(const char *string) {
-//     if (string == NULL || !is_user_vaddr(string)) {
-//         return false;
-//     }
-//     const char *ptr = string;
-//     //void *prev_page = pg_round_down(ptr);
-//     for (; ;ptr) {
-//         // check if address or page is valid
-//         if (!is_user_vaddr(ptr) || pagedir_get_page(thread_current()->pagedir, pg_round_down(ptr)) == NULL) { 
-//             return false;
-//         }
-//         if (*ptr == '\0') {
-//             break;
-//         }
-//         ptr++;
-//     }
-//     return true;
-// }
+bool validate_user_string(const char *string) {
+    if (string == NULL || !is_user_vaddr(string)) {
+        return false;
+    }
+    const char *ptr = string;
+    //void *prev_page = pg_round_down(ptr);
+    for (; ;ptr++) {
+        // check if address or page is valid
+        if (!is_user_vaddr(ptr) || pagedir_get_page(thread_current()->pagedir, pg_round_down(ptr)) == NULL) { 
+            return false;
+        }
+        if (*ptr == '\0') {
+            break;
+        }
+    }
+    return true;
+}
 
 
 
