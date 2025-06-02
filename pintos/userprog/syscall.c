@@ -18,6 +18,8 @@ static struct lock filesys_lock; //use this to protect file system calls
 
 bool check_user_ptr(const void *ptr);
 void validate_user_vaddr (const void *vaddr);
+bool validate_user_buffer(void *pointer, size_t length, bool check_writable);
+bool validate_user_string(const char *string);
 void exit_helper(int status);
 
 // gets the next availible file descriptor
@@ -34,6 +36,13 @@ void syscall_init(void) {
 
 static void syscall_handler(struct intr_frame *f UNUSED) {
     //user arguments are passed via the esp pointer
+
+    //make sure the esp pointer is valid, 4 bytes used for syscall number
+    for (int i = 0; i < 4; i++) {
+        if (!check_user_ptr((uint8_t *)f->esp + i)) {
+            exit_helper(-1);
+        }
+    }
     uint32_t *args = ((uint32_t *) f->esp);
 
     /*
@@ -45,10 +54,18 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
     //testing commit 
     /* printf("System call number: %d\n", args[0]); */
 
+
+    if (!check_user_ptr(args)) {
+        exit_helper(-1);
+    }
+
     switch (args[0]) {
 
         case SYS_EXIT:
             f->eax = args[1];
+            if (!check_user_ptr(&args[1])) {
+                exit_helper(-1);
+            }   
             printf("%s: exit(%d)\n", thread_current()->name, args[1]);
             thread_exit();
             break;
@@ -299,6 +316,42 @@ void validate_user_vaddr (const void *vaddr){
         thread_exit (); // Ensure the thread also exits cleanly
     }
 }
+
+
+// bool validate_user_buffer(void *pointer, size_t length, bool check_writable) {
+//     if (pointer == NULL || !is_user_vaddr(pointer)) {
+//         return false;
+//     }
+//     size_t offset;
+//     // check if every page the buffer spans is valid
+//     for (offset = 0; offset < length; offset += PGSIZE) {
+//         void *addr = pg_round_down(pointer + offset);
+//         if (!is_user_vaddr(addr) || !pagedir_get_page(thread_current()->pagedir, addr)) {
+//             return false;
+//         }
+//     }
+//     return true;
+// }
+
+// bool validate_user_string(const char *string) {
+//     if (string == NULL || !is_user_vaddr(string)) {
+//         return false;
+//     }
+//     const char *ptr = string;
+//     //void *prev_page = pg_round_down(ptr);
+//     for (; ;ptr) {
+//         // check if address or page is valid
+//         if (!is_user_vaddr(ptr) || pagedir_get_page(thread_current()->pagedir, pg_round_down(ptr)) == NULL) { 
+//             return false;
+//         }
+//         if (*ptr == '\0') {
+//             break;
+//         }
+//         ptr++;
+//     }
+//     return true;
+// }
+
 
 
 struct file_descriptor_entry *get_file_descriptor (int fd)
