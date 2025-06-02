@@ -139,7 +139,6 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
                     exit_helper(-1); //could not add file to table
                 }
             }
-
         case SYS_FILESIZE: 
             lock_acquire(&filesys_lock);
             f->eax = -1; 
