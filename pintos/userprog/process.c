@@ -51,15 +51,32 @@ tid_t process_execute(const char *file_name) {
     if ((fn_first_space = strchr(file_name, ' ')))
        *fn_first_space = '\x00';
 
+    // printf("process_execute: file_name === %s\n", file_name);
+    struct thread *cur = thread_current();
+    /* Before spawning the child, clear our load_success under load_lock. */
+    lock_acquire(&cur->load_lock);
+    cur->load_success = false;
+    lock_release(&cur->load_lock);
+       
     /* Create a new thread to execute FILE_NAME. */
     tid = thread_create(file_name, PRI_DEFAULT, start_process, fn_copy);
-    if (tid == TID_ERROR)
+    if (tid == TID_ERROR) {
         palloc_free_page(fn_copy);
+        return TID_ERROR;
+    }
 
     /* Wait for and return the result of program loading. */
     /* TODO. */
+    lock_acquire(&cur->load_lock);
+    while (!cur->load_success)
+        cond_wait(&cur->load_cond, &cur->load_lock);
+    bool ok = cur->load_success;
+    lock_release(&cur->load_lock);
 
-    return tid;
+    return ok ? tid : TID_ERROR;
+    
+
+    // return tid;
 }
 
 /* A thread function that loads a user process and starts it
@@ -82,6 +99,16 @@ static void start_process(void *file_name_) {
 
     /* If load failed, quit. */
     palloc_free_page(file_name);
+
+    /* Signal the parent whether load succeeded or failed: */
+    struct thread *parent = cur->parent_tcb;
+    if (parent != NULL) {
+        lock_acquire(&parent->load_lock);
+        parent->load_success = success;
+        cond_signal(&parent->load_cond, &parent->load_lock);
+        lock_release(&parent->load_lock);
+    }
+
     if (!success)
         thread_exit();
 
@@ -105,8 +132,42 @@ static void start_process(void *file_name_) {
    This function will be implemented in problem 2-2.  For now, it
    does nothing. */
 int process_wait(tid_t child_tid UNUSED) {
-    sema_down(&temporary);
-    return 0;
+    // sema_down(&temporary);
+    // return 0;
+    struct thread *cur = thread_current();
+    struct child_info *ci = NULL;
+
+    /* Find the matching child_info in our children list. */
+    for (struct list_elem *e = list_begin(&cur->children);
+         e != list_end(&cur->children);
+         e = list_next(e)) 
+    {
+        struct child_info *entry = list_entry(e, struct child_info, elem);
+        if (entry->child_tid == child_tid) {
+            ci = entry;
+            break;
+        }
+    }
+    if (ci == NULL)
+        return -1;  /* Not our child or already reaped. */
+
+    struct thread *child = ci->child_tcb;
+
+    /* Block until the child sets has_exited. */
+    lock_acquire(&child->exit_lock);
+    while (!child->has_exited)
+        cond_wait(&child->exit_cond, &child->exit_lock);
+    int code = child->exit_status;
+    lock_release(&child->exit_lock);
+
+    /* Remove this child_info so we can’t wait on it again. */
+    list_remove(&ci->elem);
+    free(ci);
+
+    /* Mark the child as orphaned so the scheduler will free its TCB. */
+    child->parent_tcb = NULL;
+
+    return code;
 }
 
 /* Free the current process's resources. */
@@ -142,7 +203,11 @@ void process_exit(void) {
         pagedir_activate(NULL);
         pagedir_destroy(pd);
     }
-    sema_up(&temporary);
+    // sema_up(&temporary);
+    lock_acquire(&cur->exit_lock);
+    cur->has_exited = true;
+    cond_signal(&cur->exit_cond, &cur->exit_lock);
+    lock_release(&cur->exit_lock);
 }
 
 /* Sets up the CPU for running user code in the current

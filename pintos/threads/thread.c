@@ -182,10 +182,17 @@ tid_t thread_create(const char *name, int priority, thread_func *function,
     tid = t->tid = allocate_tid();
 
     /* Add thread to the list of children in parent. */
-    struct child_info* child_ent = malloc(sizeof(struct child_info));
+    struct child_info *child_ent = malloc(sizeof(struct child_info));
+    if (child_ent == NULL)
+        return TID_ERROR;
     child_ent->child_tid = tid;
     child_ent->child_tcb = t;
     list_push_back(&thread_current()->children, &child_ent->elem);
+
+    t->parent_tcb = thread_current();
+    // The following just for safety
+    t->has_exited = false;
+    t->exit_status = -1;
 
     /* Stack frame for kernel_thread(). */
     kf = alloc_frame(t, sizeof *kf);
@@ -427,7 +434,18 @@ static void init_thread(struct thread *t, const char *name, int priority) {
     t->stack = (uint8_t *) t + PGSIZE;
     t->priority = priority;
     t->magic = THREAD_MAGIC;
+
+    /* Initialize thread member variables. */
+    t->exit_status = -1;
+    t->has_exited = false;
+    lock_init(&t->exit_lock);
+    cond_init(&t->exit_cond);
+    t->parent_tcb = NULL;
     list_init(&t->children);
+
+    lock_init(&t->load_lock);
+    cond_init(&t->load_cond);
+    t->load_success = false;
 
     old_level = intr_disable();
     list_push_back(&all_list, &t->allelem);
@@ -497,7 +515,42 @@ void thread_schedule_tail(struct thread *prev) {
     if (prev != NULL && prev->status == THREAD_DYING &&
         prev != initial_thread) {
         ASSERT(prev != cur);
-        palloc_free_page(prev);
+        // palloc_free_page(prev);
+
+        /* Only free prev if either:
+            (a) prev->parent_tcb == NULL (orphaned), or
+            (b) parent has already reaped it (no child_info left). */
+        bool can_free = false;
+
+        if (prev->parent_tcb == NULL) {
+            /* Orphaned, so no parent is waiting. */
+            can_free = true;
+        } else {
+            /* Parent still exists, check if parent->children contains prev. */
+            struct thread *par = prev->parent_tcb;
+            if (par != NULL) {
+                bool still_in_list = false;
+                for (struct list_elem *ce = list_begin(&par->children);
+                        ce != list_end(&par->children);
+                        ce = list_next(ce)) {
+                    struct child_info *ci = list_entry(ce, struct child_info, elem);
+                    if (ci->child_tcb == prev) {
+                        still_in_list = true;
+                        break;
+                    }
+                }
+                /* If parent exists but does NOT still have a child_info for `prev`,
+                    it means the parent already reaped it, so it's okay to free. */
+                if (!still_in_list)
+                    can_free = true;
+            } else {
+                /* Parent TCB went away entirely (parent died) */
+                can_free = true;
+            }
+        }
+
+        if (can_free)
+            palloc_free_page(prev);
     }
 }
 

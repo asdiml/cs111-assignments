@@ -94,7 +94,20 @@ struct thread {
     /* Shared between thread.c and synch.c. */
     struct list_elem elem; /* List element. */
 
+    bool load_success; /* If child process is loaded successfully. */
+    struct lock load_lock; /* Protects load_success. */
+    struct condition load_cond; /* Parent waits here until child signals. */
+
+    int exit_status; /* Similar to status field? */
+    bool has_exited; /* Whether thread exit is called. */
+    struct lock exit_lock; /* Lock that serializes access to exit_status & has_exited*/
+    /* A condition that a parent can wait on. When the child calls exit(), it will
+       set has_exited = true and signal on exit_cond. */
+    struct condition exit_cond;
+
+    struct thread *parent_tcb; /* Parent's thread. */
     struct list children; /* List of children threads as child_info structs. */
+    struct list_elem child_elem; /* This thread in its parent's list of children. */
 
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
@@ -104,8 +117,8 @@ struct thread {
     struct list file_descriptors;      
     //list element for file descriptor
     struct lock fd_table_lock;
-    int exit_status;
     //file descriptor lock 
+    // int exit_status;
     
 #endif
 
@@ -113,6 +126,7 @@ struct thread {
     unsigned magic; /* Detects stack overflow. */
 };
 
+/* Store each child entry in the parent's `children` list. */
 struct child_info {
    tid_t child_tid; /* Child's tid */
    struct thread* child_tcb; /* Child's tcb */

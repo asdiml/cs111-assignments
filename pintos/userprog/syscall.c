@@ -139,6 +139,8 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
                     exit_helper(-1); //could not add file to table
                 }
             }
+            break;
+
         case SYS_FILESIZE: 
             lock_acquire(&filesys_lock);
             f->eax = -1; 
@@ -233,6 +235,22 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
             }
             lock_release(&filesys_lock);
             break;
+        
+        case SYS_EXEC:
+            const char *cmd_line = (const char *) args[1];
+            if (!validate_user_string (cmd_line))
+                exit_helper(-1);
+
+            f->eax = process_execute(cmd_line);
+            break;
+
+        case SYS_WAIT:
+            tid_t pid = (tid_t) args[1];
+            // if (!check_user_ptr(&args[1]))
+            //     exit_helper(-1);
+            f->eax = process_wait(pid);
+            break;
+
     }       
 }
 
@@ -379,6 +397,24 @@ struct file_descriptor_entry *get_file_descriptor (int fd)
 void exit_helper(int status) {
     struct thread *curr = thread_current();
     printf("%s: exit(%d)\n", curr->name, status);
-    curr->exit_status = status; 
+    
+    /* Store exit code under lock, signal any waiting parent. */
+    /* We should also be able to handle this in thread_exit() instead. */
+    lock_acquire(&curr->exit_lock);
+    curr->exit_status = status;
+    curr->has_exited = true;
+    cond_signal(&curr->exit_cond, &curr->exit_lock);
+    lock_release(&curr->exit_lock);
+
+// #ifdef USERPROG
+    /* Re‐enable writes on our executable, if kept open. */
+    // if (curr->executable_file != NULL) {
+    //     file_allow_write(curr->executable_file);
+    //     file_close(curr->executable_file);
+    //     curr->executable_file = NULL;
+    // }
+// #endif
+
+    // curr->exit_status = status; 
     thread_exit(); // Exit the thread
 }
