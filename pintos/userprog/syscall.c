@@ -34,11 +34,11 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
         case SYS_EXIT:
             f->eax = args[1];
             printf("%s: exit(%d)\n", thread_current()->name, args[1]);
-            thread_exit();
+            thread_exit(args[1]); // NORETURN
             break;
         
         case SYS_EXEC:
-            
+
         
         
         default:

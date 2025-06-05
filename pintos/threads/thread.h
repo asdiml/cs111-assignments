@@ -94,7 +94,14 @@ struct thread {
     /* Shared between thread.c and synch.c. */
     struct list_elem elem; /* List element. */
 
+    /* For signaling the parent process that we're exiting. */
+    struct lock exit_cond_lock;
+    struct condition exit_cond;
+
+    struct semaphore exit_sema;
     struct list children; /* List of children threads as child_info structs. */
+    struct thread *parent;
+    bool parent_alive;
 
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
@@ -132,7 +139,7 @@ struct thread *thread_current(void);
 tid_t thread_tid(void);
 const char *thread_name(void);
 
-void thread_exit(void) NO_RETURN;
+void thread_exit(int exit_code) NO_RETURN;
 void thread_yield(void);
 
 /* Performs some operation on thread t, given auxiliary data AUX. */

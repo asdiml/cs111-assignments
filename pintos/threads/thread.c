@@ -36,6 +36,7 @@ static struct list all_list;
 /* Hashmap of all exit info structs, and corresponding functions
    required to initialize the hashmap. */
 static struct hash exit_info_hashmap;
+static struct lock exit_hashmap_lock;
 
 /* Idle thread. */
 static struct thread *idle_thread;
@@ -98,6 +99,8 @@ void thread_init(void) {
     lock_init(&tid_lock);
     list_init(&ready_list);
     list_init(&all_list);
+    lock_init(&exit_hashmap_lock);
+    hash_init(&exit_info_hashmap, hash_einfo, hash_less_einfo, NULL);
 
     /* Set up a thread structure for the running thread. */
     initial_thread = running_thread();
@@ -180,8 +183,15 @@ tid_t thread_create(const char *name, int priority, thread_func *function,
     /* Initialize thread. */
     init_thread(t, name, priority);
     tid = t->tid = allocate_tid();
+    t->parent_alive = true;
+    t->parent = thread_current();
 
-    /* Add thread to the list of children in parent. */
+    /* Initialize the thread's exit condition variable and lock. */
+    cond_init(&t->exit_cond);
+    lock_init(&t->exit_cond_lock);
+
+    /* Add thread to the list of children in parent, and initialize
+       the associated semaphore. */
     struct child_info* child_ent = malloc(sizeof(struct child_info));
     child_ent->child_tid = tid;
     child_ent->child_tcb = t;
@@ -271,13 +281,72 @@ tid_t thread_tid(void) {
 
 /* Deschedules the current thread and destroys it.  Never
    returns to the caller. */
-void thread_exit(void) {
+void thread_exit(int exit_code) {
     ASSERT(!intr_context());
 
 #ifdef USERPROG
     process_exit();
 #endif
 
+    /* TODO: Deeply think if this system will cause any deadlocks... (it will). */
+
+    /* Don't let any other threads touch the children, parent and 
+       parent_alive fields of the thread while it exits. */
+    sema_down(&thread_current()->exit_sema);
+
+    /* Actions performed if not the root thread i.e. has parent, and if
+       the parent is still alive. */
+    if (strcmp(thread_name(), "main") != 0 && thread_current()->parent_alive) {
+
+        /* Remove itself from its parent's list of children. */
+        ASSERT(thread_current()->parent != NULL);
+        sema_down(&thread_current()->parent->exit_sema);
+        for (struct list_elem *e = list_begin(&thread_current()->parent->children); e != list_end(&thread_current()->parent->children); e = list_next(e)) {
+            struct child_info *parent_cinfo = list_entry(e, struct child_info, elem);
+            if (parent_cinfo->child_tid == thread_tid()) {
+                list_remove(e);
+                free(parent_cinfo);
+                break;
+            }
+        }
+        sema_up(&thread_current()->parent->exit_sema);
+
+        /* Allocate an exit_info struct for the parent to wait on,
+        and add it to the global hashmap of exit_info structs. */
+        struct exit_info *einfo = malloc(sizeof(*einfo));
+        einfo->tid = thread_tid();
+        einfo->exit_code = exit_code;
+
+        lock_acquire(&exit_hashmap_lock);
+        ASSERT(hash_insert(&exit_info_hashmap, &einfo->elem) == NULL);
+        lock_release(&exit_hashmap_lock);
+
+        /* Signal to its parent that it has exited. */
+        /* TODO. */
+    }
+
+    /* Iterate through un-exited children of the exiting thread. */
+    for (struct list_elem *e = list_begin(&thread_current()->children); e != list_end(&thread_current()->children); e = list_remove(e)) {
+        struct child_info *child = list_entry(e, struct child_info, elem);
+
+        /* Prevent the child from exiting. */
+        sema_down(&child->child_tcb->exit_sema);
+
+        /* Free the un-waited exit_info structs in exit_info_hashmap, if it exists. */
+        struct exit_info einfo_clone = { .tid = child->child_tid };
+        lock_acquire(&exit_hashmap_lock);
+        struct hash_elem *child_einfo = hash_delete(&exit_info_hashmap, &einfo_clone.elem);
+        lock_release(&exit_hashmap_lock);
+        free(hash_entry(child_einfo, struct exit_info, elem));
+
+        /* Set its parent_alive field to false, and its parent field to NULL.
+           Also free the allocated child_info struct. */
+        child->child_tcb->parent_alive = false;
+        child->child_tcb->parent = NULL;
+        sema_up(&child->child_tcb->exit_sema); 
+        free(child);
+    }
+    
     /* Remove thread from all threads list, set our status to dying,
        and schedule another process.  That process will destroy us
        when it calls thread_schedule_tail(). */
@@ -392,7 +461,7 @@ static void kernel_thread(thread_func *function, void *aux) {
 
     intr_enable(); /* The scheduler runs with interrupts off. */
     function(aux); /* Execute the thread function. */
-    thread_exit(); /* If function() returns, kill the thread. */
+    thread_exit(-1); /* If function() returns, kill the thread. */
 }
 
 /* Returns the running thread. */
@@ -427,7 +496,9 @@ static void init_thread(struct thread *t, const char *name, int priority) {
     t->stack = (uint8_t *) t + PGSIZE;
     t->priority = priority;
     t->magic = THREAD_MAGIC;
+
     list_init(&t->children);
+    sema_init(&t->exit_sema, 1);
 
     old_level = intr_disable();
     list_push_back(&all_list, &t->allelem);

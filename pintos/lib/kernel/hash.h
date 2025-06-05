@@ -26,6 +26,9 @@
 
 #include "list.h"
 
+#define list_elem_to_hash_elem(LIST_ELEM)                                      \
+    list_entry(LIST_ELEM, struct hash_elem, list_elem)
+
 /* Hash element. */
 struct hash_elem {
     struct list_elem list_elem;
