@@ -99,6 +99,14 @@ struct thread {
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
     uint32_t *pagedir; /* Page directory. */
+
+    //list of file descriptors
+    struct list file_descriptors;      
+    //list element for file descriptor
+    struct lock fd_table_lock;
+    int exit_status;
+    //file descriptor lock 
+    
 #endif
 
     /* Owned by thread.c. */
@@ -110,6 +118,16 @@ struct child_info {
    struct thread* child_tcb; /* Child's tcb */
    struct list_elem elem; /* List element. */
 };
+
+/* Structure to represent an individual file descriptor entry in a process's table. */
+struct file_descriptor_entry
+{
+    int fd;                             
+    struct file *file;                  
+    struct list_elem elem;   
+    bool is_console_fd; // Indicates if this is a console file descriptor          
+};
+
 
 /* If false (default), use round-robin scheduler.
    If true, use multi-level feedback queue scheduler.

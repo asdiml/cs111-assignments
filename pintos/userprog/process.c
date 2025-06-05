@@ -25,6 +25,8 @@
 static struct semaphore temporary;
 static thread_func start_process NO_RETURN;
 static bool load(const char *cmdline, void (**eip)(void), void **esp);
+static void init_userprog_thread_fd_list (struct thread *t);
+
 
 /* Starts a new thread running a user program loaded from FILENAME, 
    where the parent thread's tid_t is parent. The new thread may be
@@ -63,6 +65,10 @@ tid_t process_execute(const char *file_name) {
 /* A thread function that loads a user process and starts it
    running. */
 static void start_process(void *file_name_) {
+    // Initialize the thread's file descriptor list
+    struct thread *cur = thread_current();
+    init_userprog_thread_fd_list(cur);
+
     char *file_name = file_name_;
     struct intr_frame if_;
     bool success;
@@ -106,6 +112,19 @@ int process_wait(tid_t child_tid UNUSED) {
 /* Free the current process's resources. */
 void process_exit(void) {
     struct thread *cur = thread_current();
+
+    //clean up file descriptor table
+    struct list_elem *e = list_begin(&cur->file_descriptors);
+    while (e != list_end(&cur->file_descriptors)) {
+        struct file_descriptor_entry *fde = list_entry(e, struct file_descriptor_entry, elem);
+        e = list_remove(e); // Remove from list and advance
+
+        if (fde->file != NULL) {
+            file_close(fde->file);
+        }
+        palloc_free_page(fde);
+    }
+
     uint32_t *pd;
 
     /* Destroy the current process's page directory and switch back
@@ -206,6 +225,8 @@ static bool validate_segment(const struct Elf32_Phdr *, struct file *);
 static bool load_segment(struct file *file, off_t ofs, uint8_t *upage,
                          uint32_t read_bytes, uint32_t zero_bytes,
                          bool writable);
+
+
 
 /* Loads an ELF executable from FILE_NAME into the current thread.
    Stores the executable's entry point into *EIP
@@ -566,3 +587,29 @@ static bool place_args_on_stack(void **esp, args_t *args, uint8_t* const kpage, 
     return true;
 }
 
+static void init_userprog_thread_fd_list (struct thread *t){
+    list_init (&t->file_descriptors);
+    // adding file descriptor entries for stdin and stdout
+    struct file_descriptor_entry *stdin_fde = palloc_get_page(0);
+    if (stdin_fde != NULL) {
+        stdin_fde->fd = 0;
+        stdin_fde->file = NULL; 
+        stdin_fde->is_console_fd = true;
+        list_push_back(&t->file_descriptors, &stdin_fde->elem);
+    } else {
+        PANIC ("Failed to allocate stdin file descriptor entry");
+    }
+
+    // Example of adding stdout (fd 1):
+    struct file_descriptor_entry *stdout_fde = palloc_get_page(0);
+    if (stdout_fde != NULL) {
+        stdout_fde->fd = 1;
+        stdout_fde->file = NULL; // No actual file for stdout
+        stdout_fde->is_console_fd = true;
+        list_push_back(&t->file_descriptors, &stdout_fde->elem);
+    } else {
+        PANIC ("Failed to allocate stdout file descriptor entry");
+    }
+
+    lock_init (&t->fd_table_lock); // If you decide on per-thread FD table lock
+}
