@@ -105,6 +105,7 @@ static void start_process(void *file_name_) {
     // Initialize the thread's file descriptor list
     struct thread *cur = thread_current();
     init_userprog_thread_fd_list(cur);
+    cur->exec_file = NULL;
 
     char *file_name = file_name_;
     struct intr_frame if_;
@@ -336,27 +337,46 @@ bool load(const char *file_name, void (**eip)(void), void **esp) {
     bool success = false;
     int i;
 
+    char *program_name, *save_ptr;
+    /* Build copy of entire cmd (eg. ls -la). */
+    char *cmd_copy = palloc_get_page(0);
+    if (cmd_copy == NULL)
+        goto done;
+    strlcpy(cmd_copy, file_name, PGSIZE);
+
+    /* Extract program name (first token) using the copy. */
+    program_name = strtok_r(cmd_copy, " ", &save_ptr);
+    if (program_name == NULL) {
+        palloc_free_page(cmd_copy);
+        thread_exit();
+    }
+
     /* Allocate and activate page directory. */
     t->pagedir = pagedir_create();
     if (t->pagedir == NULL)
         goto done;
     process_activate();
     
-    /* Quick and dirty extraction of the first space-delim string.  
-       It does not make sense for us to parse args here. */
-    fn_copy = palloc_get_page(0);
-    if (fn_copy == NULL)
-        goto done;
-    strlcpy(fn_copy, file_name, PGSIZE);
-    if ((fncpy_first_space = strchr(fn_copy, ' ')))
-        *fncpy_first_space = '\x00';
+    // /* Quick and dirty extraction of the first space-delim string.  
+    //    It does not make sense for us to parse args here. */
+    // fn_copy = palloc_get_page(0);
+    // if (fn_copy == NULL)
+    //     goto done;
+    // strlcpy(fn_copy, file_name, PGSIZE);
+    // if ((fncpy_first_space = strchr(fn_copy, ' ')))
+    //     *fncpy_first_space = '\x00';
 
     /* Open executable file. */
-    file = filesys_open(fn_copy);
+    file = filesys_open(program_name);
     if (file == NULL) {
-        printf("load: %s: open failed\n", fn_copy);
+        printf("load: %s: open failed\n", program_name);
         goto done;
     }
+    // file = filesys_open(fn_copy);
+    // if (file == NULL) {
+    //     printf("load: %s: open failed\n", fn_copy);
+    //     goto done;
+    // }
 
     /* Store executable in PCB and deny writes (until process exits). */
     t->exec_file = file;
@@ -367,7 +387,8 @@ bool load(const char *file_name, void (**eip)(void), void **esp) {
         memcmp(ehdr.e_ident, "\177ELF\1\1\1", 7) || ehdr.e_type != 2 ||
         ehdr.e_machine != 3 || ehdr.e_version != 1 ||
         ehdr.e_phentsize != sizeof(struct Elf32_Phdr) || ehdr.e_phnum > 1024) {
-        printf("load: %s: error loading executable\n", fn_copy);
+        printf("load: %s: error loading executable\n", program_name);
+        // printf("load: %s: error loading executable\n", fn_copy);
         goto done;
     }
 
@@ -437,7 +458,10 @@ done:
     // file_close(file);
     /* Only close the file and enable writes if load fails. */
     if (!success) {
-        file_close(file);
+        if (file != NULL) {
+            file_allow_write(file);
+            file_close(file);
+        }
         t->exec_file = NULL;
     }
     return success;
@@ -556,58 +580,142 @@ static bool place_args_on_stack(void **esp, args_t *args, uint8_t* const kpage, 
 
 /* Setup the stack with argv and argc by mapping a zeroed page at the top of
    user virtual memory and placing in the strings accordingly. */
+// static bool setup_stack(void **esp, const char *file_name) {
+//     char *fn_copy = NULL;
+//     args_t parsed_args = {.argc = 0, .argv = NULL};
+//     uint8_t *argv_page, *kpage;
+//     bool success = false;
+
+//     /* argv can be arbitrarily large, so we just allocate a page for it.
+//        The main reason I don't want to use malloc() is because we have at most
+//        10 possible sizes of chunks for it (else the memory use overhead is going to
+//        become high). 
+
+//        This may come back to bite us for extremely large-sized cmd line args, 
+//        so we should KIV the possibility of segfaults due to this. */
+//     parsed_args.argv = palloc_get_page(0);
+//     argv_page = (uint8_t*)parsed_args.argv;
+//     if (parsed_args.argv == NULL)
+//         return false;
+
+//     /* We should not modify the original file_name, which strtok_r does. 
+//        Allocate a local buffer and strlcpy over.
+//        Also, the pointers in parsed_args.argv will point into this string. */
+//     fn_copy = malloc(strlen(file_name) + 1);
+//     if (fn_copy == NULL)
+//         goto done;
+//     strlcpy(fn_copy, file_name, strlen(file_name) + 1);
+
+//     /* Populate parsed_args.argc and parsed_args.argv */
+//     if (!parse_args(fn_copy, &parsed_args, parsed_args.argv))
+//         goto done;
+
+//     /* ----- FOR DEBUGGING ONLY ----- */
+//     // printf("argc: %u\n", parsed_args.argc);
+//     // for (int i = 0; i <= parsed_args.argc; i++)
+//     //     if (parsed_args.argv[i] != NULL)
+//     //         printf("argv[%d] = '%s'\n", i, parsed_args.argv[i]);
+//     //     else
+//     //         printf("argv[%d] = null\n", i);
+//     /* ----- FOR DEBUGGING ONLY ----- */
+
+//     kpage = palloc_get_page(PAL_USER | PAL_ZERO);
+//     if (kpage != NULL) {
+//         success = install_page(((uint8_t *) PHYS_BASE) - PGSIZE, kpage, true) \
+//             && place_args_on_stack(esp, &parsed_args, kpage, ((uint8_t *) PHYS_BASE) - PGSIZE);
+//         if (!success)
+//             palloc_free_page(kpage);
+//     }
+
+// done:
+//     /* We arrive here regardless of whether setup_stack is successful. */
+//     palloc_free_page(argv_page);
+//     free(fn_copy);
+//     return success;
+// }
+
 static bool setup_stack(void **esp, const char *file_name) {
-    char *fn_copy = NULL;
-    args_t parsed_args = {.argc = 0, .argv = NULL};
-    uint8_t *argv_page, *kpage;
+    uint8_t *kpage;
     bool success = false;
-
-    /* argv can be arbitrarily large, so we just allocate a page for it.
-       The main reason I don't want to use malloc() is because we have at most
-       10 possible sizes of chunks for it (else the memory use overhead is going to
-       become high). 
-
-       This may come back to bite us for extremely large-sized cmd line args, 
-       so we should KIV the possibility of segfaults due to this. */
-    parsed_args.argv = palloc_get_page(0);
-    argv_page = (uint8_t*)parsed_args.argv;
-    if (parsed_args.argv == NULL)
-        return false;
-
-    /* We should not modify the original file_name, which strtok_r does. 
-       Allocate a local buffer and strlcpy over.
-       Also, the pointers in parsed_args.argv will point into this string. */
-    fn_copy = malloc(strlen(file_name) + 1);
-    if (fn_copy == NULL)
-        goto done;
-    strlcpy(fn_copy, file_name, strlen(file_name) + 1);
-
-    /* Populate parsed_args.argc and parsed_args.argv */
-    if (!parse_args(fn_copy, &parsed_args, parsed_args.argv))
-        goto done;
-
-    /* ----- FOR DEBUGGING ONLY ----- */
-    // printf("argc: %u\n", parsed_args.argc);
-    // for (int i = 0; i <= parsed_args.argc; i++)
-    //     if (parsed_args.argv[i] != NULL)
-    //         printf("argv[%d] = '%s'\n", i, parsed_args.argv[i]);
-    //     else
-    //         printf("argv[%d] = null\n", i);
-    /* ----- FOR DEBUGGING ONLY ----- */
 
     kpage = palloc_get_page(PAL_USER | PAL_ZERO);
     if (kpage != NULL) {
-        success = install_page(((uint8_t *) PHYS_BASE) - PGSIZE, kpage, true) \
-            && place_args_on_stack(esp, &parsed_args, kpage, ((uint8_t *) PHYS_BASE) - PGSIZE);
-        if (!success)
+        success = install_page(((uint8_t *) PHYS_BASE) - PGSIZE, kpage, true);
+        if (success)
+            *esp = PHYS_BASE;
+        else
             palloc_free_page(kpage);
     }
 
-done:
-    /* We arrive here regardless of whether setup_stack is successful. */
-    palloc_free_page(argv_page);
-    free(fn_copy);
-    return success;
+    /* Copy file_name into a temporary buffer. */
+    char *fn_copy = palloc_get_page(0);
+    if (fn_copy == NULL)
+        return false;
+    strlcpy(fn_copy, file_name, PGSIZE); // fn_copy == "prog arg1 arg2 ..."
+
+    /* Tokenize using strtok_r. */
+    char *save_ptr = NULL;
+    char *argv[128];
+    int argc = 0;
+    int total_bytes = 0;
+
+    /* Copy each argument onto stack and save address. Order doesn't matter. */
+    char *token = strtok_r(fn_copy, " ", &save_ptr);
+    while (token != NULL) {
+        size_t len = strlen(token) + 1; // include NULL
+        /* Check for stack overflow: too many/too-big arguments.
+           Enforce that args fit within half of the page. */
+        if (((uintptr_t) *esp - len) < ((uintptr_t) PHYS_BASE - PGSIZE / 2)) {
+            palloc_free_page(fn_copy);
+            return false;
+        }
+
+        *esp -= len; // move the stack pointer down
+        memcpy(*esp, token, len); // copy the argument string
+        argv[argc++] = (char *) *esp; // record its user‐VA
+        total_bytes += len;
+        token = strtok_r(NULL, " ", &save_ptr);
+    }
+
+    /* Done copying all argument strings. Free the temporary fn_copy. */
+    palloc_free_page(fn_copy);
+
+    /* Compute how many bytes needed for space alignment.
+       Does not include return address, only the arguments on the stack. */
+    total_bytes +=
+        ((argc + 1) * sizeof(char *)) + sizeof(char **) + sizeof(int);
+    const size_t pad_bytes = ((uintptr_t) PHYS_BASE - total_bytes) & 0xf;
+
+    /* Subtract space alignment bytes and pad with 0. */
+    *esp -= pad_bytes;
+    memset(*esp, 0, pad_bytes);
+
+    /* Push NULL sentinel (argv[argc] = NULL). */
+    *esp = (void *) ((uintptr_t) *esp - sizeof(char *));
+    *((char **) *esp) = NULL;
+
+    /* Push each argv[i] pointer in reverse order. */
+    for (int i = argc - 1; i >= 0; i--) {
+        *esp = (void *) ((uintptr_t) *esp - sizeof(char *));
+        *((char **) *esp) = argv[i];
+    }
+
+    /* Push the char **argv pointer itself. */
+    char **argv_ptr = (char **) *esp;
+    *esp = (void *) ((uintptr_t) *esp - sizeof(char **));
+    *((char ***) *esp) = argv_ptr;
+
+    /* Push argc. */
+    *esp = (void *) ((uintptr_t) *esp - sizeof(int));
+    *((int *) *esp) = argc;
+
+    /* Push fake return address (0). */
+    *esp = (void *) ((uintptr_t) *esp - sizeof(void *));
+    *((void **) *esp) = 0;
+
+    /* Now all of _start(argc, argv) are laid out correctly,
+       with 16-byte alignment for (esp + 4). */
+    return true;
 }
 
 /* Adds a mapping from user virtual address UPAGE to kernel

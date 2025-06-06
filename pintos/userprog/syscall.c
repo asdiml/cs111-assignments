@@ -242,10 +242,12 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
         case SYS_EXEC:
             /* Check every byte of args[1]. */
             // HACK: should probably do this for all arguments in a separate helper
-            for (int i = 0; i < 4; i++) {
-                if (!check_user_ptr(args + 4 + i))
-                    exit_helper(-1);
-            }
+            // for (int i = 0; i < 4; i++) {
+            //     if (!check_user_ptr(args + 4 + i))
+            //         exit_helper(-1);
+            // }
+            if (!check_user_ptr(&args[1]))
+                exit_helper(-1);
 
             const char *cmd_line = (const char *) args[1];
             if (!validate_user_string (cmd_line))
@@ -271,10 +273,19 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
 
 //check that a user pointer is valid
 bool check_user_ptr(const void *ptr) {
-    if (ptr == NULL || !is_user_vaddr(ptr) ||
-        pagedir_get_page(thread_current()->pagedir, ptr) == NULL) {
-        return false;
+    if (ptr == NULL) return false;
+    
+    uint8_t *p = (uint8_t *) ptr;
+    for (int i = 0; i < sizeof(uint32_t); i++) {
+        if (!is_user_vaddr(p + i) ||
+            pagedir_get_page(thread_current()->pagedir, p + i) == NULL) {
+            return false;
+        }
     }
+    // if (ptr == NULL || !is_user_vaddr(ptr) ||
+    //     pagedir_get_page(thread_current()->pagedir, ptr) == NULL) {
+    //     return false;
+    // }
     return true;
 }
 
