@@ -195,6 +195,13 @@ int process_wait(tid_t child_tid UNUSED) {
 void process_exit(void) {
     struct thread *cur = thread_current();
 
+    /* Close executable file and re-allow writes. */
+    if (cur->exec_file != NULL) {
+        file_allow_write(cur->exec_file);
+        file_close(cur->exec_file);
+        cur->exec_file = NULL;
+    }
+    
     //clean up file descriptor table
     struct list_elem *e = list_begin(&cur->file_descriptors);
     while (e != list_end(&cur->file_descriptors)) {
@@ -351,6 +358,10 @@ bool load(const char *file_name, void (**eip)(void), void **esp) {
         goto done;
     }
 
+    /* Store executable in PCB and deny writes (until process exits). */
+    t->exec_file = file;
+    file_deny_write(file);
+
     /* Read and verify executable header. */
     if (file_read(file, &ehdr, sizeof ehdr) != sizeof ehdr ||
         memcmp(ehdr.e_ident, "\177ELF\1\1\1", 7) || ehdr.e_type != 2 ||
@@ -423,7 +434,12 @@ bool load(const char *file_name, void (**eip)(void), void **esp) {
     
 done:
     palloc_free_page(fn_copy);
-    file_close(file);
+    // file_close(file);
+    /* Only close the file and enable writes if load fails. */
+    if (!success) {
+        file_close(file);
+        t->exec_file = NULL;
+    }
     return success;
 }
 

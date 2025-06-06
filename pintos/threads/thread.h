@@ -99,7 +99,7 @@ struct thread {
     struct lock load_lock; /* Protects load_success. */
     struct condition load_cond; /* Parent waits here until child signals. */
 
-    int exit_status; /* Similar to status field? */
+    int exit_status; /* Exit status code if exited, -1 before exiting. */
     bool has_exited; /* Whether thread exit is called. */
     struct lock exit_lock; /* Lock that serializes access to exit_status & has_exited*/
     /* A condition that a parent can wait on. When the child calls exit(), it will
@@ -120,6 +120,8 @@ struct thread {
     struct lock fd_table_lock;
     //file descriptor lock 
     // int exit_status;
+
+    struct file *exec_file; /* Keep the loaded executable open throughout the process. */
     
 #endif
 
