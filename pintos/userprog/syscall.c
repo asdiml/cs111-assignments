@@ -68,8 +68,10 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
                 exit_helper(-1);
             }
             f->eax = args[1];
-            printf("%s: exit(%d)\n", thread_current()->name, args[1]);
-            thread_exit();
+            // printf("%s: exit(%d)\n", thread_current()->name, args[1]);
+            // thread_exit();
+            /* Use exit_helper instead to set exit codes in thread. */
+            exit_helper(args[1]);
             break;
 
         case SYS_INCREMENT:
@@ -421,7 +423,8 @@ void exit_helper(int status) {
     printf("%s: exit(%d)\n", curr->name, status);
     
     /* Store exit code under lock, signal any waiting parent. */
-    /* We should also be able to handle this in thread_exit() instead. */
+    /* We should also be able to handle this in thread_exit() instead,
+       but since it doesn't take any parameters currently let's do it here. */
     lock_acquire(&curr->exit_lock);
     curr->exit_status = status;
     curr->has_exited = true;
