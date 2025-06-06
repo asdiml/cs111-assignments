@@ -48,33 +48,53 @@ tid_t process_execute(const char *file_name) {
     /* In general, we shouldn't edit dereferenced objects of const
        ptrs, but I don't think we use this for anything else other
        than the name of thread. */
-    if ((fn_first_space = strchr(file_name, ' ')))
-       *fn_first_space = '\x00';
+    // if ((fn_first_space = strchr(file_name, ' ')))
+    //    *fn_first_space = '\x00';
+
+    /* Create another temp copy of FILE_NAME, to avoid warning from passing
+       const FILE_NAME into strtok_r. */
+    char *temp = palloc_get_page(0);
+    if (temp == NULL) {
+        palloc_free_page(fn_copy);
+        return TID_ERROR;
+    }
+    strlcpy(temp, file_name, PGSIZE);
+
+    /* Extract program name (eg. ls) which will be used for the thread name. */
+    char *program_name, *save_ptr;
+    program_name = strtok_r(temp, " ", &save_ptr);
+    if (program_name == NULL) {
+        palloc_free_page(temp);
+        palloc_free_page(fn_copy);
+        return TID_ERROR;
+    }
 
     // printf("process_execute: file_name === %s\n", file_name);
     struct thread *cur = thread_current();
-    /* Before spawning the child, clear our load_success under load_lock. */
+
+    /* Before spawning the child, clear load flags under load_lock. */
     lock_acquire(&cur->load_lock);
     cur->load_success = false;
+    cur->load_done = false;
     lock_release(&cur->load_lock);
        
     /* Create a new thread to execute FILE_NAME. */
-    tid = thread_create(file_name, PRI_DEFAULT, start_process, fn_copy);
+    tid = thread_create(program_name, PRI_DEFAULT, start_process, fn_copy);
     if (tid == TID_ERROR) {
         palloc_free_page(fn_copy);
         return TID_ERROR;
     }
 
-    /* Wait for and return the result of program loading. */
+    palloc_free_page(temp);
+
+    /* Parent waits for child and return child's tid if it loads process successfully. */
     /* TODO. */
     lock_acquire(&cur->load_lock);
-    while (!cur->load_success)
+    while (!cur->load_done)
         cond_wait(&cur->load_cond, &cur->load_lock);
-    bool ok = cur->load_success;
     lock_release(&cur->load_lock);
 
-    return ok ? tid : TID_ERROR;
-    
+    return cur->load_success ? tid : TID_ERROR;
 
     // return tid;
 }
@@ -105,6 +125,7 @@ static void start_process(void *file_name_) {
     if (parent != NULL) {
         lock_acquire(&parent->load_lock);
         parent->load_success = success;
+        parent->load_done = true;
         cond_signal(&parent->load_cond, &parent->load_lock);
         lock_release(&parent->load_lock);
     }
@@ -134,14 +155,14 @@ static void start_process(void *file_name_) {
 int process_wait(tid_t child_tid UNUSED) {
     // sema_down(&temporary);
     // return 0;
+
     struct thread *cur = thread_current();
     struct child_info *ci = NULL;
 
     /* Find the matching child_info in our children list. */
     for (struct list_elem *e = list_begin(&cur->children);
          e != list_end(&cur->children);
-         e = list_next(e)) 
-    {
+         e = list_next(e)) {
         struct child_info *entry = list_entry(e, struct child_info, elem);
         if (entry->child_tid == child_tid) {
             ci = entry;
@@ -153,7 +174,7 @@ int process_wait(tid_t child_tid UNUSED) {
 
     struct thread *child = ci->child_tcb;
 
-    /* Block until the child sets has_exited. */
+    /* Current thread (parent) blocks until the child sets has_exited. */
     lock_acquire(&child->exit_lock);
     while (!child->has_exited)
         cond_wait(&child->exit_cond, &child->exit_lock);
@@ -164,7 +185,7 @@ int process_wait(tid_t child_tid UNUSED) {
     list_remove(&ci->elem);
     free(ci);
 
-    /* Mark the child as orphaned so the scheduler will free its TCB. */
+    /* Orphan the child TCB so thread_schedule_tail() knows it can free it. */
     child->parent_tcb = NULL;
 
     return code;
@@ -204,6 +225,8 @@ void process_exit(void) {
         pagedir_destroy(pd);
     }
     // sema_up(&temporary);
+
+    /* Wake up our process' parent (if any) so that process_wait() can return. */
     lock_acquire(&cur->exit_lock);
     cur->has_exited = true;
     cond_signal(&cur->exit_cond, &cur->exit_lock);

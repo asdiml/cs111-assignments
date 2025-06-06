@@ -446,6 +446,7 @@ static void init_thread(struct thread *t, const char *name, int priority) {
     lock_init(&t->load_lock);
     cond_init(&t->load_cond);
     t->load_success = false;
+    t->load_done = false;
 
     old_level = intr_disable();
     list_push_back(&all_list, &t->allelem);

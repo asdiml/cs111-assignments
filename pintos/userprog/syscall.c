@@ -13,6 +13,7 @@
 #include "threads/palloc.h"    // for palloc 
 #include "devices/input.h"     // for input_getc
 #include "lib/string.h"
+#include "devices/shutdown.h"
 
 static void syscall_handler(struct intr_frame *);
 static struct lock filesys_lock; //use this to protect file system calls
@@ -237,6 +238,13 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
             break;
         
         case SYS_EXEC:
+            /* Check every byte of args[1]. */
+            // HACK: should probably do this for all arguments in a separate helper
+            for (int i = 0; i < 4; i++) {
+                if (!check_user_ptr(args + 4 + i))
+                    exit_helper(-1);
+            }
+
             const char *cmd_line = (const char *) args[1];
             if (!validate_user_string (cmd_line))
                 exit_helper(-1);
@@ -249,6 +257,10 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
             // if (!check_user_ptr(&args[1]))
             //     exit_helper(-1);
             f->eax = process_wait(pid);
+            break;
+
+        case SYS_HALT:
+            shutdown_power_off();
             break;
 
     }       
@@ -359,11 +371,21 @@ bool validate_user_string(const char *string) {
     if (string == NULL || !is_user_vaddr(string)) {
         return false;
     }
+    
+    /* The pointer itself must be non‐NULL, lie below PHYS_BASE,
+        and point to a page in cur->pagedir. */
+    if (string == NULL 
+        || !is_user_vaddr ((void *) string) 
+        || pagedir_get_page (thread_current()->pagedir, string) == NULL) {
+            return false;
+    }
+    
     const char *ptr = string;
     //void *prev_page = pg_round_down(ptr);
     for (; ;ptr++) {
         // check if address or page is valid
-        if (!is_user_vaddr(ptr) || pagedir_get_page(thread_current()->pagedir, pg_round_down(ptr)) == NULL) { 
+        // if (!is_user_vaddr(ptr) || pagedir_get_page(thread_current()->pagedir, pg_round_down(ptr)) == NULL) { 
+        if (!is_user_vaddr(ptr) || pagedir_get_page(thread_current()->pagedir, ptr) == NULL) { 
             return false;
         }
         if (*ptr == '\0') {

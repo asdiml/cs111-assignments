@@ -95,6 +95,7 @@ struct thread {
     struct list_elem elem; /* List element. */
 
     bool load_success; /* If child process is loaded successfully. */
+    bool load_done; /* If child process has finished loading (either success or fail). */
     struct lock load_lock; /* Protects load_success. */
     struct condition load_cond; /* Parent waits here until child signals. */
 
