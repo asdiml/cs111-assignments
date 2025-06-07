@@ -212,7 +212,7 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
             } else {
                 struct file_descriptor_entry *fde = get_file_descriptor(fd);
                 if (fde == NULL || fde->file == NULL) {
-                    f->eax = 5;
+                    f->eax = -1;  // FIXED: Return -1 instead of 5
                 } else {
                     f->eax = file_write(fde->file, buffer, size);
                 }
@@ -267,6 +267,35 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
             shutdown_power_off();
             break;
 
+        case SYS_CLOSE:  // ADDED: Missing SYS_CLOSE case
+            lock_acquire(&filesys_lock);
+            fd = args[1];
+            struct file_descriptor_entry *fde_close = get_file_descriptor(fd);
+            if (fde_close != NULL && fde_close->file != NULL) {
+                file_close(fde_close->file);
+                // Remove from file descriptor table
+                struct thread *curr = thread_current();
+                lock_acquire(&curr->fd_table_lock);
+                list_remove(&fde_close->elem);
+                lock_release(&curr->fd_table_lock);
+                free(fde_close);
+                f->eax = 0; // Success
+            } else {
+                f->eax = -1; // Invalid file descriptor
+            }
+            lock_release(&filesys_lock);
+            break;
+        case SYS_TELL:
+            lock_acquire(&filesys_lock);
+            fd = args[1];
+            struct file_descriptor_entry *fde_tell = get_file_descriptor(fd);
+            if (fde_tell != NULL && fde_tell->file != NULL) {
+                f->eax = file_tell(fde_tell->file); // Return current position
+            } else {
+                f->eax = -1; // Invalid file descriptor
+            }
+            lock_release(&filesys_lock);
+            break;
     }       
 }
 
