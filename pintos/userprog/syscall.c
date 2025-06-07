@@ -10,6 +10,7 @@
 #include "threads/synch.h"      // for lock
 #include "userprog/process.h"
 #include "filesys/file.h"       // for file operations
+#include "threads/malloc.h"
 #include "threads/palloc.h"    // for palloc 
 #include "devices/input.h"     // for input_getc
 #include "lib/string.h"
@@ -132,7 +133,7 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
                 break;
             } else {
                 int fd = get_next_fd(); 
-                if (add_fd_to_table(fd, opened_file)){
+                if (fd != -1 && add_fd_to_table(fd, opened_file)){
                     lock_release(&filesys_lock);
                     f->eax = fd; //return the file descriptor
                     break;
@@ -296,6 +297,10 @@ int get_next_fd(void) {
     bool found;
 
     while (1) {
+        /* Arbitrarily restrict the max fd to 10. */
+        if (fd > 10)
+            return -1;
+
         found = false;
         struct list_elem *e;
         //go through each list entry and find next availible fd
@@ -319,7 +324,7 @@ bool add_fd_to_table(int avail_fd, struct file *opened_file) {
     /* Add the file to the current thread's file descriptor table. */
     if (opened_file) {
         struct thread *curr = thread_current ();
-        struct file_descriptor_entry *fde = palloc_get_page(PAL_ZERO);
+        struct file_descriptor_entry *fde = malloc(sizeof(*fde));
 
         if (fde) {
             fde->file = opened_file;
@@ -358,8 +363,8 @@ void validate_user_vaddr (const void *vaddr){
         || pagedir_get_page (thread_current ()->pagedir, vaddr) == NULL)
     {
         printf ("%s: exit(%d)\n", thread_current ()->name, -1);
-        process_exit ();
-        thread_exit (); // Ensure the thread also exits cleanly
+        // process_exit ();
+        exit_helper(-1); // Ensure the thread also exits cleanly
     }
 }
 

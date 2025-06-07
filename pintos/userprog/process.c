@@ -118,7 +118,6 @@ static void start_process(void *file_name_) {
     if_.eflags = FLAG_IF | FLAG_MBS;
     success = load(file_name, &if_.eip, &if_.esp);
 
-    /* If load failed, quit. */
     palloc_free_page(file_name);
 
     /* Signal the parent whether load succeeded or failed: */
@@ -177,15 +176,16 @@ int process_wait(tid_t child_tid UNUSED) {
     }   
 
     struct thread *child = ci->child_tcb;
+    ASSERT(child != NULL);
 
     /* Current thread (parent) blocks until the child sets has_exited. */
     lock_acquire(&child->exit_lock);
     while (!child->has_exited)
         cond_wait(&child->exit_cond, &child->exit_lock);
     int code = child->exit_status;
-    printf("Waiting on TID %d\n", child_tid);
-    printf("Exit code is %d\n", child->exit_status);
-    printf("We are TID %d\n\n", thread_tid());
+    // printf("Waiting on TID %d\n", child_tid);
+    // printf("Exit code is %d\n", child->exit_status);
+    // printf("We are TID %d\n\n", thread_tid());
     lock_release(&child->exit_lock);
 
     /* Remove this child_info so we can’t wait on it again. */
@@ -202,6 +202,7 @@ int process_wait(tid_t child_tid UNUSED) {
 
 /* Free the current process's resources. */
 void process_exit(void) {
+    struct list_elem *e;
     struct thread *cur = thread_current();
 
     /* Close executable file and re-allow writes. */
@@ -212,22 +213,23 @@ void process_exit(void) {
     }
     
     //clean up file descriptor table
-    struct list_elem *e = list_begin(&cur->file_descriptors);
-    while (e != list_end(&cur->file_descriptors)) {
+    while (!list_empty(&cur->file_descriptors)) {
+        e = list_pop_front (&cur->file_descriptors);
         struct file_descriptor_entry *fde = list_entry(e, struct file_descriptor_entry, elem);
-        e = list_remove(e); // Remove from list and advance
 
         if (fde->file != NULL) {
             file_close(fde->file);
         }
-        palloc_free_page(fde);
+        free(fde);
     }
 
-    /* Go through the list of children and free all the allocated child_info's. */
-    e = list_begin(&cur->children);
-    while (e != list_end(&cur->children)) {
+    /* Go through the list of children and free all the allocated child_info's. 
+       Also inform all children that the parent has exited. */
+    while (!list_empty(&cur->children)) {
+        e = list_pop_front (&cur->children);
         struct child_info *ci = list_entry(e, struct child_info, elem);
-        e = list_remove(e); // Remove from list and advance
+        ASSERT(ci->child_tcb != NULL);
+        ci->child_tcb->parent_tcb = NULL;
         free(ci);
     }
 
@@ -470,7 +472,7 @@ bool load(const char *file_name, void (**eip)(void), void **esp) {
     success = true;
     
 done:
-    palloc_free_page(fn_copy);
+    palloc_free_page(program_name);
     // file_close(file);
     /* Only close the file and enable writes if load fails. */
     if (!success) {
@@ -818,7 +820,7 @@ static bool place_args_on_stack(void **esp, args_t *args, uint8_t* const kpage, 
 static void init_userprog_thread_fd_list (struct thread *t){
     list_init (&t->file_descriptors);
     // adding file descriptor entries for stdin and stdout
-    struct file_descriptor_entry *stdin_fde = palloc_get_page(0);
+    struct file_descriptor_entry *stdin_fde = malloc(sizeof(*stdin_fde));
     if (stdin_fde != NULL) {
         stdin_fde->fd = 0;
         stdin_fde->file = NULL; 
@@ -829,7 +831,7 @@ static void init_userprog_thread_fd_list (struct thread *t){
     }
 
     // Example of adding stdout (fd 1):
-    struct file_descriptor_entry *stdout_fde = palloc_get_page(0);
+    struct file_descriptor_entry *stdout_fde = malloc(sizeof(*stdout_fde));
     if (stdout_fde != NULL) {
         stdout_fde->fd = 1;
         stdout_fde->file = NULL; // No actual file for stdout
