@@ -161,6 +161,7 @@ int process_wait(tid_t child_tid UNUSED) {
     struct child_info *ci = NULL;
 
     /* Find the matching child_info in our children list. */
+    lock_acquire(&cur->children_lock);
     for (struct list_elem *e = list_begin(&cur->children);
          e != list_end(&cur->children);
          e = list_next(e)) {
@@ -170,8 +171,10 @@ int process_wait(tid_t child_tid UNUSED) {
             break;
         }
     }
-    if (ci == NULL)
+    lock_release(&cur->children_lock);
+    if (ci == NULL) {
         return -1;  /* Not our child or already reaped. */
+    }   
 
     struct thread *child = ci->child_tcb;
 
@@ -180,10 +183,15 @@ int process_wait(tid_t child_tid UNUSED) {
     while (!child->has_exited)
         cond_wait(&child->exit_cond, &child->exit_lock);
     int code = child->exit_status;
+    printf("Waiting on TID %d\n", child_tid);
+    printf("Exit code is %d\n", child->exit_status);
+    printf("We are TID %d\n\n", thread_tid());
     lock_release(&child->exit_lock);
 
     /* Remove this child_info so we can’t wait on it again. */
+    lock_acquire(&cur->children_lock);
     list_remove(&ci->elem);
+    lock_release(&cur->children_lock);
     free(ci);
 
     /* Orphan the child TCB so thread_schedule_tail() knows it can free it. */
@@ -213,6 +221,14 @@ void process_exit(void) {
             file_close(fde->file);
         }
         palloc_free_page(fde);
+    }
+
+    /* Go through the list of children and free all the allocated child_info's. */
+    e = list_begin(&cur->children);
+    while (e != list_end(&cur->children)) {
+        struct child_info *ci = list_entry(e, struct child_info, elem);
+        e = list_remove(e); // Remove from list and advance
+        free(ci);
     }
 
     uint32_t *pd;

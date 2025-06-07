@@ -90,7 +90,7 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
                 exit_helper(-1);
             }
             f->eax = filesys_create((const char *)args[1], (unsigned)args[2]);
-            lock_release(&filesys_lock); 
+            lock_release(&filesys_lock);
             break;
         
         case SYS_REMOVE: 
@@ -139,7 +139,7 @@ static void syscall_handler(struct intr_frame *f UNUSED) {
                 } else {
                     file_close(opened_file); //close the file if we can't add it to the table
                     lock_release(&filesys_lock);
-                    exit_helper(-1); //could not add file to table
+                    // exit_helper(-1); //could not add file to table
                 }
             }
             break;
@@ -315,29 +315,28 @@ int get_next_fd(void) {
 
 
 bool add_fd_to_table(int avail_fd, struct file *opened_file) {
-    /* add the file to the current thread's file descriptor table */
-    if (opened_file != NULL){
+
+    /* Add the file to the current thread's file descriptor table. */
+    if (opened_file) {
         struct thread *curr = thread_current ();
         struct file_descriptor_entry *fde = palloc_get_page(PAL_ZERO);
 
-        if (fde != NULL)
-        {
+        if (fde) {
             fde->file = opened_file;
-            fde->fd = avail_fd; // Assign and increment FD
-            fde->is_console_fd = false; // It's a regular file
-            lock_acquire(&curr->fd_table_lock); // Acquire lock before modifying the list
+            fde->fd = avail_fd;
+            fde->is_console_fd = false; /* Regular file */
+
+            /* TODO: Don't use a lock around each thread's fd table, since it is not accessed by
+               other threads.  */
+            lock_acquire(&curr->fd_table_lock);
             list_push_back (&curr->file_descriptors, &fde->elem);
-            lock_release(&curr->fd_table_lock); // Release lock after modification
+            lock_release(&curr->fd_table_lock);
+            return true;
         }
-        else
-        {
-            file_close (opened_file);
-            return false;
-        }
-        return true;
-    } else {
-        return false;
     }
+
+    /* If opened_file == NULL or fde == NULL, return false. */
+    return false;
 }
 
 int get_file_size(int fd) {

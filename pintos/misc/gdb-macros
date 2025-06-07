@@ -39,6 +39,13 @@ document dumplist
     invoke as dumplist name_of_list name_of_struct name_of_elem_in_list_struct
 end
 
+define dump_mainthread_children
+    list_entry all_list->head.next thread allelem
+    set $main_thread = $rc
+    set $children_list = &((struct thread *)($main_thread))->children
+    dumplist $children_list child_info elem
+end
+
 # print a thread's backtrace, given a pointer to the struct thread *
 define btthread
    if $arg0 == ($esp - ((unsigned)$esp % 4096)) 

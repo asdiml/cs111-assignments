@@ -107,6 +107,7 @@ struct thread {
     struct condition exit_cond;
 
     struct thread *parent_tcb; /* Parent's thread. */
+    struct lock children_lock;
     struct list children; /* List of children threads as child_info structs. */
     struct list_elem child_elem; /* This thread in its parent's list of children. */
 

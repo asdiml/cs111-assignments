@@ -441,6 +441,7 @@ static void init_thread(struct thread *t, const char *name, int priority) {
     lock_init(&t->exit_lock);
     cond_init(&t->exit_cond);
     t->parent_tcb = NULL;
+    lock_init(&t->children_lock);
     list_init(&t->children);
 
     lock_init(&t->load_lock);
@@ -531,6 +532,7 @@ void thread_schedule_tail(struct thread *prev) {
             struct thread *par = prev->parent_tcb;
             if (par != NULL) {
                 bool still_in_list = false;
+                lock_acquire(&par->children_lock);
                 for (struct list_elem *ce = list_begin(&par->children);
                         ce != list_end(&par->children);
                         ce = list_next(ce)) {
@@ -540,6 +542,7 @@ void thread_schedule_tail(struct thread *prev) {
                         break;
                     }
                 }
+                lock_release(&par->children_lock);
                 /* If parent exists but does NOT still have a child_info for `prev`,
                     it means the parent already reaped it, so it's okay to free. */
                 if (!still_in_list)
