@@ -110,6 +110,7 @@ struct thread {
     struct lock children_lock;
     struct list children; /* List of children threads as child_info structs. */
     struct list_elem child_elem; /* This thread in its parent's list of children. */
+    bool is_alive; 
 
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
