@@ -183,19 +183,21 @@ int process_wait(tid_t child_tid UNUSED) {
     while (!child->has_exited)
         cond_wait(&child->exit_cond, &child->exit_lock);
     int code = child->exit_status;
-    printf("Waiting on TID %d\n", child_tid);
-    printf("Exit code is %d\n", child->exit_status);
-    printf("We are TID %d\n\n", thread_tid());
+    // printf("Waiting on TID %d\n", child_tid);
+    // printf("Exit code is %d\n", child->exit_status);
+    // printf("We are TID %d\n\n", thread_tid());
     lock_release(&child->exit_lock);
 
     /* Remove this child_info so we can’t wait on it again. */
     lock_acquire(&cur->children_lock);
     list_remove(&ci->elem);
     lock_release(&cur->children_lock);
+
+    palloc_free_page(child);
     free(ci);
 
     /* Orphan the child TCB so thread_schedule_tail() knows it can free it. */
-    child->parent_tcb = NULL;
+    //child->parent_tcb = NULL;
 
     return code;
 }
@@ -203,6 +205,7 @@ int process_wait(tid_t child_tid UNUSED) {
 /* Free the current process's resources. */
 void process_exit(void) {
     struct thread *cur = thread_current();
+    cur->is_alive = false;
 
     /* Close executable file and re-allow writes. */
     if (cur->exec_file != NULL) {
@@ -214,47 +217,60 @@ void process_exit(void) {
     //clean up file descriptor table
     struct list_elem *e = list_begin(&cur->file_descriptors);
     while (e != list_end(&cur->file_descriptors)) {
-        struct file_descriptor_entry *fde = list_entry(e, struct file_descriptor_entry, elem);
-        e = list_remove(e); // Remove from list and advance
+    struct file_descriptor_entry *fde = list_entry(e, struct file_descriptor_entry, elem);
+    e = list_remove(e); // Remove from list and advance
 
-        if (fde->file != NULL) {
-            file_close(fde->file);
-        }
-        palloc_free_page(fde);
+    if (fde->file != NULL) {
+        file_close(fde->file);
     }
 
-    /* Go through the list of children and free all the allocated child_info's. */
-    e = list_begin(&cur->children);
-    while (e != list_end(&cur->children)) {
+    // CHANGE THIS to match your new allocation method
+    free(fde);
+    }
+
+    lock_acquire(&cur->children_lock);
+    while (!list_empty(&cur->children)) {
+        e = list_pop_front(&cur->children);
         struct child_info *ci = list_entry(e, struct child_info, elem);
-        e = list_remove(e); // Remove from list and advance
+        struct thread *child_tcb = ci->child_tcb;
+
+        if (child_tcb->is_alive) {
+            // Child is alive, so it becomes an orphan.
+            child_tcb->parent_tcb = NULL;
+        } else {
+            // Child is dead (zombie), so we must clean it up.
+            palloc_free_page(child_tcb);
+        }
+        // Free the parent's tracking struct.
         free(ci);
+    }
+    lock_release(&cur->children_lock);
+
+    lock_acquire(&cur->exit_lock);
+    cur->has_exited = true;
+    cond_signal(&cur->exit_cond, &cur->exit_lock);
+    lock_release(&cur->exit_lock);
+
+    if (cur->parent_tcb == NULL) {
+        palloc_free_page(cur);
     }
 
     uint32_t *pd;
 
     /* Destroy the current process's page directory and switch back
        to the kernel-only page directory. */
-    pd = cur->pagedir;
-    if (pd != NULL) {
-        /* Correct ordering here is crucial.  We must set
-           cur->pagedir to NULL before switching page directories,
-           so that a timer interrupt can't switch back to the
-           process page directory.  We must activate the base page
-           directory before destroying the process's page
-           directory, or our active page directory will be one
-           that's been freed (and cleared). */
-        cur->pagedir = NULL;
-        pagedir_activate(NULL);
-        pagedir_destroy(pd);
-    }
-    // sema_up(&temporary);
-
-    /* Wake up our process' parent (if any) so that process_wait() can return. */
-    lock_acquire(&cur->exit_lock);
-    cur->has_exited = true;
-    cond_signal(&cur->exit_cond, &cur->exit_lock);
-    lock_release(&cur->exit_lock);
+       pd = cur->pagedir;
+       if (pd != NULL) {
+           cur->pagedir = NULL;
+           pagedir_activate(NULL);
+           pagedir_destroy(pd);
+       }
+       
+       // 7. FINAL STEP: If this process is an orphan, free its own TCB page.
+       // This MUST be the last thing that happens before the thread stops running.
+       if (cur->parent_tcb == NULL) {
+           palloc_free_page(cur);
+       }
 }
 
 /* Sets up the CPU for running user code in the current
@@ -470,6 +486,7 @@ bool load(const char *file_name, void (**eip)(void), void **esp) {
     success = true;
     
 done:
+    palloc_free_page(cmd_copy); 
     palloc_free_page(fn_copy);
     // file_close(file);
     /* Only close the file and enable writes if load fails. */
@@ -818,7 +835,8 @@ static bool place_args_on_stack(void **esp, args_t *args, uint8_t* const kpage, 
 static void init_userprog_thread_fd_list (struct thread *t){
     list_init (&t->file_descriptors);
     // adding file descriptor entries for stdin and stdout
-    struct file_descriptor_entry *stdin_fde = palloc_get_page(0);
+    //struct file_descriptor_entry *stdin_fde = palloc_get_page(0);
+    struct file_descriptor_entry *stdin_fde = malloc(sizeof(struct file_descriptor_entry));
     if (stdin_fde != NULL) {
         stdin_fde->fd = 0;
         stdin_fde->file = NULL; 
@@ -829,7 +847,8 @@ static void init_userprog_thread_fd_list (struct thread *t){
     }
 
     // Example of adding stdout (fd 1):
-    struct file_descriptor_entry *stdout_fde = palloc_get_page(0);
+    // struct file_descriptor_entry *stdout_fde = palloc_get_page(0);
+    struct file_descriptor_entry *stdout_fde = malloc(sizeof(struct file_descriptor_entry));
     if (stdout_fde != NULL) {
         stdout_fde->fd = 1;
         stdout_fde->file = NULL; // No actual file for stdout

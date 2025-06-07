@@ -319,7 +319,8 @@ bool add_fd_to_table(int avail_fd, struct file *opened_file) {
     /* Add the file to the current thread's file descriptor table. */
     if (opened_file) {
         struct thread *curr = thread_current ();
-        struct file_descriptor_entry *fde = palloc_get_page(PAL_ZERO);
+        struct file_descriptor_entry *fde = malloc(sizeof(struct file_descriptor_entry));
+
 
         if (fde) {
             fde->file = opened_file;
